@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'" />
+  <title>Serial Port Monitor</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="toolbar">
+    <div class="group">
+      <label for="portSelect">Port</label>
+      <select id="portSelect" class="wide"></select>
+      <button id="refreshBtn" title="Refresh port list">&#x21bb;</button>
+    </div>
+
+    <div class="group">
+      <label for="baudSelect">Baud</label>
+      <select id="baudSelect">
+        <option>300</option><option>1200</option><option>2400</option>
+        <option>4800</option><option>9600</option><option>19200</option>
+        <option>38400</option><option>57600</option><option selected>115200</option>
+        <option>230400</option><option>460800</option><option>921600</option>
+        <option value="custom">Custom…</option>
+      </select>
+      <input id="customBaud" type="number" min="1" placeholder="baud" class="hidden" />
+    </div>
+
+    <div class="group">
+      <label for="dataBitsSelect">Data</label>
+      <select id="dataBitsSelect">
+        <option>5</option><option>6</option><option>7</option><option selected>8</option>
+      </select>
+    </div>
+
+    <div class="group">
+      <label for="paritySelect">Parity</label>
+      <select id="paritySelect">
+        <option value="none" selected>None</option>
+        <option value="even">Even</option>
+        <option value="odd">Odd</option>
+        <option value="mark">Mark</option>
+        <option value="space">Space</option>
+      </select>
+    </div>
+
+    <div class="group">
+      <label for="stopBitsSelect">Stop</label>
+      <select id="stopBitsSelect">
+        <option selected>1</option><option>1.5</option><option>2</option>
+      </select>
+    </div>
+
+    <div class="group">
+      <label for="flowSelect">Flow</label>
+      <select id="flowSelect">
+        <option value="none" selected>None</option>
+        <option value="rtscts">RTS/CTS</option>
+        <option value="xonxoff">XON/XOFF</option>
+      </select>
+    </div>
+
+    <button id="connectBtn" class="primary">Connect</button>
+  </header>
+
+  <section class="viewbar">
+    <div class="group">
+      <label>View</label>
+      <div class="segmented">
+        <button id="viewAscii" class="seg active">ASCII</button>
+        <button id="viewHex" class="seg">HEX</button>
+        <button id="viewBoth" class="seg">Both</button>
+      </div>
+    </div>
+    <label class="check"><input type="checkbox" id="timestampsChk" checked /> Timestamps</label>
+    <label class="check"><input type="checkbox" id="autoscrollChk" checked /> Autoscroll</label>
+    <label class="check"><input type="checkbox" id="showTxChk" checked /> Echo TX</label>
+    <div class="spacer"></div>
+    <span id="rxCounter" class="counter">RX 0 B</span>
+    <span id="txCounter" class="counter">TX 0 B</span>
+    <button id="saveLogBtn">Save Log</button>
+    <button id="clearBtn">Clear</button>
+  </section>
+
+  <main id="output" class="output"></main>
+
+  <footer class="sendbar">
+    <select id="lineEndingSelect" title="Line ending appended to sent text">
+      <option value="">No line ending</option>
+      <option value="\n" selected>LF (\n)</option>
+      <option value="\r">CR (\r)</option>
+      <option value="\r\n">CRLF (\r\n)</option>
+    </select>
+    <input id="sendInput" type="text" placeholder="Type data to send… (Up/Down for history)" disabled />
+    <label class="check"><input type="checkbox" id="sendHexChk" /> HEX</label>
+    <button id="sendBtn" class="primary" disabled>Send</button>
+  </footer>
+
+  <div id="statusbar" class="statusbar">
+    <span id="statusDot" class="dot offline"></span>
+    <span id="statusText">Disconnected</span>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
