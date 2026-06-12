@@ -122,6 +122,7 @@ class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
+    _uiFlushTimer?.cancel();
     _portRefreshTimer?.cancel();
     _chunkSub?.cancel();
     _eventSub?.cancel();
@@ -193,8 +194,30 @@ class _HomePageState extends State<HomePage> {
 
   // ---------- RX rendering ----------
 
+  // Serial data can arrive as hundreds of tiny chunks per second; rendering
+  // each one individually hammers the engine's text layout. Batch them and
+  // paint at most ~30 times per second.
+  final List<Uint8List> _pendingChunks = [];
+  Timer? _uiFlushTimer;
+
   void _onChunk(Uint8List bytes) {
-    setState(() {
+    _pendingChunks.add(bytes);
+    _uiFlushTimer ??= Timer(const Duration(milliseconds: 33), () {
+      _uiFlushTimer = null;
+      if (!mounted || _pendingChunks.isEmpty) return;
+      final chunks = List.of(_pendingChunks);
+      _pendingChunks.clear();
+      setState(() {
+        for (final c in chunks) {
+          _renderChunk(c);
+        }
+      });
+      _scrollAfterFrame();
+    });
+  }
+
+  void _renderChunk(Uint8List bytes) {
+    {
       final text = utf8.decode(bytes, allowMalformed: true);
 
       if (viewMode == 'hex') {
@@ -257,8 +280,7 @@ class _HomePageState extends State<HomePage> {
         }
         _rxLineBuffer = '';
       }
-    });
-    _scrollAfterFrame();
+    }
   }
 
   // ---------- events ----------
