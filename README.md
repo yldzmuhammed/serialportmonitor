@@ -32,7 +32,9 @@ Output goes to `dist/`. Each platform's installer is best built on that platform
 
 ## MCP server (AI agent access)
 
-While the app is running it serves MCP (Streamable HTTP) on `http://127.0.0.1:8765/mcp` (override the port with the `SERIAL_MCP_PORT` env var; the address is shown in the status bar). The app keeps exclusive ownership of the serial port — agents read from a capture buffer in the main process, so observing traffic can never disturb the connection or drop data.
+While the app is running it serves MCP (Streamable HTTP) on `http://127.0.0.1:8765/mcp`. The app keeps exclusive ownership of the serial port — agents read from a capture buffer in the main process, so observing traffic can never disturb the connection or drop data.
+
+Click **MCP ⚙** in the app to open the server config: enable/disable the server, change its port (persisted across restarts), and copy the Claude Code connect command. The current address is always shown in the status bar.
 
 Connect Claude Code to it:
 
@@ -47,6 +49,8 @@ Tools exposed:
 | `list_ports` | Enumerate serial ports on the machine |
 | `get_status` | Connection state, settings, RX/TX totals, buffer seq range |
 | `read_data` | Passive read of captured RX/TX entries; poll incrementally with `since_seq` |
+| `open_port` | Open a port (baud, framing, flow control); the UI syncs to show the connection |
+| `close_port` | Close the current port |
 | `send_data` | Transmit text or hex through the open port (echoed in the UI as purple `AI>` lines) |
 
 The capture buffer holds the most recent 5000 RX/TX chunks with timestamps, text, and hex representations. The server binds to localhost only.

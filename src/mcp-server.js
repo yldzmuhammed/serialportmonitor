@@ -38,6 +38,26 @@ function buildServer(api) {
   );
 
   server.tool(
+    'open_port',
+    'Open a serial port in the monitor app. The app UI updates to show the connection. Any previously open port is closed first.',
+    {
+      path: z.string().describe('Port path, e.g. /dev/tty.usbmodem1234 or COM3'),
+      baud_rate: z.number().int().positive().optional().describe('Baud rate (default 115200)'),
+      data_bits: z.number().int().min(5).max(8).optional().describe('Data bits (default 8)'),
+      parity: z.enum(['none', 'even', 'odd', 'mark', 'space']).optional().describe('Parity (default none)'),
+      stop_bits: z.union([z.literal(1), z.literal(1.5), z.literal(2)]).optional().describe('Stop bits (default 1)'),
+      flow_control: z.enum(['none', 'rtscts', 'xonxoff']).optional().describe('Flow control (default none)')
+    },
+    async (args) => jsonResult(await api.openPort(args))
+  );
+
+  server.tool(
+    'close_port',
+    'Close the currently open serial port. The app UI updates to show the disconnection.',
+    async () => jsonResult(await api.closePort())
+  );
+
+  server.tool(
     'send_data',
     'Send data out the currently open serial port. The transmission is echoed in the app UI marked as agent traffic, and recorded in the capture buffer.',
     {

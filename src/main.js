@@ -4,16 +4,44 @@ const fs = require('fs');
 const { SerialPort } = require('serialport');
 const { startMcpServer } = require('./mcp-server');
 
-const MCP_PORT = parseInt(process.env.SERIAL_MCP_PORT || '8765', 10);
 const CAPTURE_MAX_ENTRIES = 5000;
+const DEFAULT_MCP_PORT = parseInt(process.env.SERIAL_MCP_PORT || '8765', 10);
 
 let mainWindow = null;
 let activePort = null;
 let activeConfig = null;
-let mcpInfo = { url: null, error: 'not started' };
+let mcpHttpServer = null;
+let mcpInfo = { url: null, error: null };
 
-// Capture ring buffer shared by the UI log and the MCP read_data tool.
-// The MCP side only ever reads this — it never touches the port.
+// ---------- persisted settings ----------
+
+function settingsPath() {
+  return path.join(app.getPath('userData'), 'settings.json');
+}
+
+function loadSettings() {
+  const defaults = { mcpEnabled: true, mcpPort: DEFAULT_MCP_PORT };
+  try {
+    return { ...defaults, ...JSON.parse(fs.readFileSync(settingsPath(), 'utf8')) };
+  } catch {
+    return defaults;
+  }
+}
+
+let settings = null; // loaded once app is ready (needs userData path)
+
+function saveSettings() {
+  try {
+    fs.writeFileSync(settingsPath(), JSON.stringify(settings, null, 2), 'utf8');
+  } catch {
+    // non-fatal: settings just won't persist
+  }
+}
+
+// ---------- capture buffer ----------
+// Shared by the UI log and the MCP read_data tool. The MCP side only ever
+// reads this — observation never touches the port.
+
 const captureBuffer = [];
 let captureSeq = 0;
 let rxTotal = 0;
@@ -33,6 +61,8 @@ function recordEntry(dir, buffer) {
   }
 }
 
+// ---------- window ----------
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1100,
@@ -51,6 +81,8 @@ function createWindow() {
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   mainWindow.on('closed', () => { mainWindow = null; });
 }
+
+// ---------- serial port ----------
 
 function closeActivePort() {
   return new Promise((resolve) => {
@@ -75,43 +107,7 @@ async function listPorts() {
   }));
 }
 
-function buildWriteBuffer(payload) {
-  if (payload.hex) {
-    const cleaned = payload.data.replace(/[^0-9a-fA-F]/g, '');
-    if (cleaned.length === 0 || cleaned.length % 2 !== 0) {
-      return { error: 'Invalid hex string (need an even number of hex digits)' };
-    }
-    return { buffer: Buffer.from(cleaned, 'hex') };
-  }
-  return { buffer: Buffer.from(payload.data + (payload.lineEnding || ''), 'utf8') };
-}
-
-function doWrite(payload) {
-  if (!activePort || !activePort.isOpen) {
-    return Promise.resolve({ ok: false, error: 'Port is not open' });
-  }
-
-  const { buffer, error } = buildWriteBuffer(payload);
-  if (error) return Promise.resolve({ ok: false, error });
-
-  return new Promise((resolve) => {
-    activePort.write(buffer, (err) => {
-      if (err) {
-        resolve({ ok: false, error: err.message });
-      } else {
-        activePort.drain(() => {
-          txTotal += buffer.length;
-          recordEntry('tx', buffer);
-          resolve({ ok: true, bytes: buffer.length });
-        });
-      }
-    });
-  });
-}
-
-ipcMain.handle('serial:list', () => listPorts());
-
-ipcMain.handle('serial:open', async (_event, options) => {
+async function openPort(options) {
   await closeActivePort();
 
   return new Promise((resolve) => {
@@ -158,7 +154,78 @@ ipcMain.handle('serial:open', async (_event, options) => {
       resolve({ ok: true });
     });
   });
-});
+}
+
+function buildWriteBuffer(payload) {
+  if (payload.hex) {
+    const cleaned = payload.data.replace(/[^0-9a-fA-F]/g, '');
+    if (cleaned.length === 0 || cleaned.length % 2 !== 0) {
+      return { error: 'Invalid hex string (need an even number of hex digits)' };
+    }
+    return { buffer: Buffer.from(cleaned, 'hex') };
+  }
+  return { buffer: Buffer.from(payload.data + (payload.lineEnding || ''), 'utf8') };
+}
+
+function doWrite(payload) {
+  if (!activePort || !activePort.isOpen) {
+    return Promise.resolve({ ok: false, error: 'Port is not open' });
+  }
+
+  const { buffer, error } = buildWriteBuffer(payload);
+  if (error) return Promise.resolve({ ok: false, error });
+
+  return new Promise((resolve) => {
+    activePort.write(buffer, (err) => {
+      if (err) {
+        resolve({ ok: false, error: err.message });
+      } else {
+        activePort.drain(() => {
+          txTotal += buffer.length;
+          recordEntry('tx', buffer);
+          resolve({ ok: true, bytes: buffer.length });
+        });
+      }
+    });
+  });
+}
+
+// ---------- MCP server lifecycle ----------
+
+async function applyMcpConfig() {
+  if (mcpHttpServer) {
+    mcpHttpServer.close();
+    if (mcpHttpServer.closeAllConnections) mcpHttpServer.closeAllConnections();
+    mcpHttpServer = null;
+  }
+
+  if (!settings.mcpEnabled) {
+    mcpInfo = { url: null, error: null };
+    return;
+  }
+
+  const started = await startMcpServer(mcpApi, settings.mcpPort);
+  if (started.server) {
+    mcpHttpServer = started.server;
+    mcpInfo = { url: started.url, error: null };
+  } else {
+    mcpInfo = { url: null, error: started.error };
+  }
+}
+
+function mcpStatus() {
+  return {
+    enabled: settings.mcpEnabled,
+    port: settings.mcpPort,
+    url: mcpInfo.url,
+    error: mcpInfo.error
+  };
+}
+
+// ---------- IPC ----------
+
+ipcMain.handle('serial:list', () => listPorts());
+ipcMain.handle('serial:open', (_event, options) => openPort(options));
 
 ipcMain.handle('serial:close', async () => {
   await closeActivePort();
@@ -178,7 +245,19 @@ ipcMain.handle('serial:setSignals', async (_event, signals) => {
   });
 });
 
-ipcMain.handle('mcp:info', () => mcpInfo);
+ipcMain.handle('mcp:info', () => mcpStatus());
+
+ipcMain.handle('mcp:configure', async (_event, config) => {
+  const port = parseInt(config.port, 10);
+  if (config.enabled && (!port || port < 1 || port > 65535)) {
+    return { ...mcpStatus(), error: 'Invalid port number' };
+  }
+  settings.mcpEnabled = !!config.enabled;
+  if (port) settings.mcpPort = port;
+  saveSettings();
+  await applyMcpConfig();
+  return mcpStatus();
+});
 
 ipcMain.handle('log:save', async (_event, content) => {
   if (!mainWindow) return { ok: false, error: 'No window' };
@@ -197,7 +276,7 @@ ipcMain.handle('log:save', async (_event, content) => {
   }
 });
 
-// ---------- MCP server API (read-mostly view over the same state) ----------
+// ---------- MCP server API ----------
 
 const mcpApi = {
   listPorts,
@@ -242,6 +321,29 @@ const mcpApi = {
     };
   },
 
+  async openPort(args) {
+    const options = {
+      path: args.path,
+      baudRate: args.baud_rate || 115200,
+      dataBits: args.data_bits || 8,
+      parity: args.parity || 'none',
+      stopBits: args.stop_bits || 1,
+      flowControl: args.flow_control || 'none'
+    };
+    const result = await openPort(options);
+    if (result.ok && mainWindow) {
+      mainWindow.webContents.send('serial:opened', options);
+    }
+    return result.ok ? { ok: true, opened: options } : result;
+  },
+
+  async closePort() {
+    const wasOpen = !!(activePort && activePort.isOpen);
+    await closeActivePort();
+    if (wasOpen && mainWindow) mainWindow.webContents.send('serial:closed');
+    return { ok: true, was_open: wasOpen };
+  },
+
   async sendData(args) {
     const lineEndings = { none: '', lf: '\n', cr: '\r', crlf: '\r\n' };
     const result = await doWrite({
@@ -261,13 +363,12 @@ const mcpApi = {
   }
 };
 
-app.whenReady().then(async () => {
-  createWindow();
+// ---------- app lifecycle ----------
 
-  const started = await startMcpServer(mcpApi, MCP_PORT);
-  mcpInfo = started.url
-    ? { url: started.url, error: null }
-    : { url: null, error: started.error };
+app.whenReady().then(async () => {
+  settings = loadSettings();
+  createWindow();
+  await applyMcpConfig();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

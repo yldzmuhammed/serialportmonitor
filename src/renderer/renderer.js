@@ -27,7 +27,14 @@ const els = {
   sendBtn: document.getElementById('sendBtn'),
   statusDot: document.getElementById('statusDot'),
   statusText: document.getElementById('statusText'),
-  mcpInfo: document.getElementById('mcpInfo')
+  mcpInfo: document.getElementById('mcpInfo'),
+  mcpToggleBtn: document.getElementById('mcpToggleBtn'),
+  mcpBar: document.getElementById('mcpBar'),
+  mcpEnabled: document.getElementById('mcpEnabledChk'),
+  mcpPort: document.getElementById('mcpPortInput'),
+  mcpApplyBtn: document.getElementById('mcpApplyBtn'),
+  mcpStatusText: document.getElementById('mcpStatusText'),
+  mcpCopyBtn: document.getElementById('mcpCopyBtn')
 };
 
 const MAX_LINES = 5000;
@@ -398,16 +405,90 @@ serialAPI.onAgentTx((info) => {
   }
 });
 
-async function showMcpInfo() {
-  const info = await serialAPI.getMcpInfo();
+serialAPI.onOpened((options) => {
+  // Port was opened by an MCP agent — sync the UI controls to its config
+  if (![...els.portSelect.options].some((o) => o.value === options.path)) {
+    const opt = document.createElement('option');
+    opt.value = options.path;
+    opt.textContent = options.path;
+    els.portSelect.appendChild(opt);
+  }
+  els.portSelect.value = options.path;
+
+  const baudStr = String(options.baudRate);
+  if ([...els.baudSelect.options].some((o) => o.value === baudStr)) {
+    els.baudSelect.value = baudStr;
+    els.customBaud.classList.add('hidden');
+  } else {
+    els.baudSelect.value = 'custom';
+    els.customBaud.value = baudStr;
+    els.customBaud.classList.remove('hidden');
+  }
+
+  els.dataBits.value = String(options.dataBits);
+  els.parity.value = options.parity;
+  els.stopBits.value = String(options.stopBits);
+  els.flow.value = options.flowControl;
+
+  setConnectedState(true);
+  appendSystem(`Port opened by agent: ${options.path} @ ${options.baudRate} baud`);
+});
+
+// ---------- MCP server config ----------
+
+function renderMcpStatus(info) {
   if (info.url) {
     els.mcpInfo.textContent = `MCP ${info.url}`;
     els.mcpInfo.classList.add('on');
-  } else {
-    els.mcpInfo.textContent = `MCP off${info.error ? ` (${info.error})` : ''}`;
+    els.mcpStatusText.textContent = `Running at ${info.url}`;
+    els.mcpStatusText.className = 'mcp-status ok';
+  } else if (info.enabled && info.error) {
+    els.mcpInfo.textContent = 'MCP error';
     els.mcpInfo.classList.remove('on');
+    els.mcpStatusText.textContent = `Failed to start: ${info.error}`;
+    els.mcpStatusText.className = 'mcp-status err';
+  } else {
+    els.mcpInfo.textContent = 'MCP off';
+    els.mcpInfo.classList.remove('on');
+    els.mcpStatusText.textContent = 'Server disabled';
+    els.mcpStatusText.className = 'mcp-status';
   }
+  els.mcpEnabled.checked = !!info.enabled;
+  if (document.activeElement !== els.mcpPort) els.mcpPort.value = info.port;
+  els.mcpCopyBtn.disabled = !info.url;
 }
+
+async function showMcpInfo() {
+  renderMcpStatus(await serialAPI.getMcpInfo());
+}
+
+els.mcpToggleBtn.addEventListener('click', () => {
+  els.mcpBar.classList.toggle('hidden');
+  if (!els.mcpBar.classList.contains('hidden')) showMcpInfo();
+});
+
+els.mcpApplyBtn.addEventListener('click', async () => {
+  const info = await serialAPI.configureMcp({
+    enabled: els.mcpEnabled.checked,
+    port: parseInt(els.mcpPort.value, 10)
+  });
+  renderMcpStatus(info);
+  appendSystem(info.url
+    ? `MCP server running at ${info.url}`
+    : info.error
+      ? `MCP server error: ${info.error}`
+      : 'MCP server stopped');
+});
+
+els.mcpCopyBtn.addEventListener('click', async () => {
+  const info = await serialAPI.getMcpInfo();
+  if (!info.url) return;
+  await navigator.clipboard.writeText(
+    `claude mcp add --transport http serial-monitor ${info.url}`
+  );
+  els.mcpCopyBtn.textContent = 'Copied!';
+  setTimeout(() => { els.mcpCopyBtn.textContent = 'Copy connect command'; }, 1500);
+});
 
 // initial load
 refreshPorts();

@@ -170,6 +170,19 @@ button.primary.connected {
 .mcp-info { font-family: var(--mono); font-size: 11px; color: var(--text-dim); }
 .mcp-info.on { color: #c4b5fd; }
 
+.mcpbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: #2d2742;
+  border-bottom: 1px solid var(--border);
+}
+#mcpPortInput { width: 80px; }
+.mcp-status { font-family: var(--mono); font-size: 11px; color: var(--text-dim); }
+.mcp-status.ok { color: var(--green); }
+.mcp-status.err { color: var(--red); }
+
 ::-webkit-scrollbar { width: 10px; }
 ::-webkit-scrollbar-track { background: var(--bg); }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 5px; }

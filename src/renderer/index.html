@@ -80,6 +80,17 @@
     <span id="txCounter" class="counter">TX 0 B</span>
     <button id="saveLogBtn">Save Log</button>
     <button id="clearBtn">Clear</button>
+    <button id="mcpToggleBtn" title="MCP server settings">MCP &#9881;</button>
+  </section>
+
+  <section id="mcpBar" class="mcpbar hidden">
+    <label class="check"><input type="checkbox" id="mcpEnabledChk" /> Enable MCP server</label>
+    <label for="mcpPortInput">Port</label>
+    <input id="mcpPortInput" type="number" min="1" max="65535" />
+    <button id="mcpApplyBtn">Apply</button>
+    <span id="mcpStatusText" class="mcp-status"></span>
+    <div class="spacer"></div>
+    <button id="mcpCopyBtn" title="Copy the command that connects Claude Code to this server">Copy connect command</button>
   </section>
 
   <main id="output" class="output"></main>
