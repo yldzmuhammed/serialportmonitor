@@ -12,7 +12,7 @@ Feature parity with the Electron app:
 - Embedded MCP server (Streamable HTTP on `127.0.0.1:8765/mcp`, configurable via the MCP ⚙ panel, persisted settings) with the same six tools: `list_ports`, `get_status`, `read_data`, `open_port`, `close_port`, `send_data`
 - Capture buffer assembles RX bytes into lines (300 ms flush) so agents read whole lines
 
-Differences from the Electron version: stop bits 1.5 is not offered (libserialport supports 1 or 2 only).
+Differences from the Electron version: stop bits 1.5 is not offered, and pseudo-terminals (virtual ports created by `socat`/`pty`) cannot be opened — libserialport requires real serial device semantics. Real USB serial devices are unaffected.
 
 ## Build & run
 
@@ -30,7 +30,7 @@ flutter build windows
 flutter build linux
 ```
 
-Serial access is via [flutter_libserialport](https://pub.dev/packages/flutter_libserialport) (FFI bindings to libserialport, bundled — nothing to install). The macOS sandbox entitlements already include `com.apple.security.device.serial` and network server access for the MCP endpoint.
+Serial access is via [flutter_libserialport](https://pub.dev/packages/flutter_libserialport) (FFI bindings to libserialport, bundled — nothing to install). The macOS App Sandbox is disabled in the entitlements; re-enable it in `macos/Runner/*.entitlements` if you ever need to distribute through the App Store (USB serial still works sandboxed via the `device.serial` entitlement).
 
 ## Architecture
 

@@ -132,6 +132,9 @@ class SerialService {
       return {'ok': false, 'error': msg};
     }
 
+    // Best-effort config: virtual ports (ptys) reject modem-control ioctls
+    // that real devices accept, so a partial failure shouldn't block opening.
+    String? configWarning;
     final spc = SerialPortConfig()
       ..baudRate = cfg.baudRate
       ..bits = cfg.dataBits
@@ -141,9 +144,7 @@ class SerialService {
     try {
       port.config = spc;
     } catch (e) {
-      port.close();
-      port.dispose();
-      return {'ok': false, 'error': 'failed to apply config: $e'};
+      configWarning = 'config not fully applied (virtual port?): $e';
     } finally {
       spc.dispose();
     }
@@ -164,7 +165,8 @@ class SerialService {
     });
 
     events.add(SerialEvent('opened', {'config': cfg, 'byAgent': byAgent}));
-    return {'ok': true};
+    if (configWarning != null) events.add(SerialEvent('error', configWarning));
+    return {'ok': true, if (configWarning != null) 'warning': configWarning};
   }
 
   Future<Map<String, dynamic>> close({bool silent = false}) async {
