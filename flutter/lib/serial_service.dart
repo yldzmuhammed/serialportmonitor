@@ -133,6 +133,10 @@ class SerialService {
 
     // Best-effort config: virtual ports (ptys) reject modem-control ioctls
     // that real devices accept, so a partial failure shouldn't block opening.
+    //
+    // OWNERSHIP: the config setter caches this object inside the SerialPort,
+    // and port.dispose() frees it. Disposing it here too is a double free
+    // that corrupts the heap on every disconnect (random engine crashes).
     String? configWarning;
     final spc = SerialPortConfig()
       ..baudRate = cfg.baudRate
@@ -144,8 +148,6 @@ class SerialService {
       port.config = spc;
     } catch (e) {
       configWarning = 'config not fully applied (virtual port?): $e';
-    } finally {
-      spc.dispose();
     }
 
     _port = port;
