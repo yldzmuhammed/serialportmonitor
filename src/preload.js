@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('serialAPI', {
   write: (payload) => ipcRenderer.invoke('serial:write', payload),
   setSignals: (signals) => ipcRenderer.invoke('serial:setSignals', signals),
   saveLog: (content) => ipcRenderer.invoke('log:save', content),
+  getMcpInfo: () => ipcRenderer.invoke('mcp:info'),
 
   onData: (callback) => {
     ipcRenderer.on('serial:data', (_event, data) => callback(new Uint8Array(data)));
@@ -16,5 +17,8 @@ contextBridge.exposeInMainWorld('serialAPI', {
   },
   onClosed: (callback) => {
     ipcRenderer.on('serial:closed', () => callback());
+  },
+  onAgentTx: (callback) => {
+    ipcRenderer.on('serial:agent-tx', (_event, info) => callback(info));
   }
 });

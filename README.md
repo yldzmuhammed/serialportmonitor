@@ -11,6 +11,7 @@ A cross-platform serial port monitor for **macOS, Windows, and Linux**, built wi
 - TX echo, send history (Up/Down arrows), RX/TX byte counters
 - Autoscroll toggle, clear, and save session log to file
 - Output capped at 5000 lines so long sessions stay responsive
+- **Built-in MCP server** so AI agents can observe and use the port without disrupting it
 
 ## Run from source
 
@@ -28,6 +29,27 @@ npm run dist:linux   # AppImage + .deb
 ```
 
 Output goes to `dist/`. Each platform's installer is best built on that platform (macOS can build all three with wine for Windows targets).
+
+## MCP server (AI agent access)
+
+While the app is running it serves MCP (Streamable HTTP) on `http://127.0.0.1:8765/mcp` (override the port with the `SERIAL_MCP_PORT` env var; the address is shown in the status bar). The app keeps exclusive ownership of the serial port — agents read from a capture buffer in the main process, so observing traffic can never disturb the connection or drop data.
+
+Connect Claude Code to it:
+
+```bash
+claude mcp add --transport http serial-monitor http://127.0.0.1:8765/mcp
+```
+
+Tools exposed:
+
+| Tool | What it does |
+|---|---|
+| `list_ports` | Enumerate serial ports on the machine |
+| `get_status` | Connection state, settings, RX/TX totals, buffer seq range |
+| `read_data` | Passive read of captured RX/TX entries; poll incrementally with `since_seq` |
+| `send_data` | Transmit text or hex through the open port (echoed in the UI as purple `AI>` lines) |
+
+The capture buffer holds the most recent 5000 RX/TX chunks with timestamps, text, and hex representations. The server binds to localhost only.
 
 ## Platform notes
 

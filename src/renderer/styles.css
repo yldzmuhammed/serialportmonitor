@@ -138,6 +138,7 @@ button.primary.connected {
 .line.rx .payload { color: var(--rx-color); }
 .line.tx .payload { color: var(--tx-color); }
 .line.tx .dir { color: var(--tx-color); }
+.line.agent .dir, .line.agent .payload { color: #c4b5fd; }
 .line.rx .dir { color: var(--green); }
 .line.sys .payload { color: var(--yellow); font-style: italic; }
 .line .dir { margin-right: 8px; font-weight: 700; }
@@ -165,6 +166,9 @@ button.primary.connected {
 }
 .dot.online { background: var(--green); box-shadow: 0 0 6px var(--green); }
 .dot.offline { background: var(--red); }
+
+.mcp-info { font-family: var(--mono); font-size: 11px; color: var(--text-dim); }
+.mcp-info.on { color: #c4b5fd; }
 
 ::-webkit-scrollbar { width: 10px; }
 ::-webkit-scrollbar-track { background: var(--bg); }

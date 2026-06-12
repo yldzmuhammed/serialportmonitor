@@ -26,7 +26,8 @@ const els = {
   sendHex: document.getElementById('sendHexChk'),
   sendBtn: document.getElementById('sendBtn'),
   statusDot: document.getElementById('statusDot'),
-  statusText: document.getElementById('statusText')
+  statusText: document.getElementById('statusText'),
+  mcpInfo: document.getElementById('mcpInfo')
 };
 
 const MAX_LINES = 5000;
@@ -119,14 +120,18 @@ function appendSystem(text) {
   scrollToBottom();
 }
 
-function appendTx(text, hexText) {
+function appendTx(text, hexText, agent = false) {
   rxLineEl = null;
   if (els.showTx.checked) {
-    els.output.appendChild(makeLine('tx', 'TX>', text, hexText));
+    els.output.appendChild(makeLine(agent ? 'tx agent' : 'tx', agent ? 'AI>' : 'TX>', text, hexText));
     trimOutput();
     scrollToBottom();
   }
-  logEntries.push({ time: timestamp(), dir: 'TX', text: hexText ? `${text} [${hexText}]` : text });
+  logEntries.push({
+    time: timestamp(),
+    dir: agent ? 'TX(AI)' : 'TX',
+    text: hexText ? `${text} [${hexText}]` : text
+  });
 }
 
 // ---------- RX rendering ----------
@@ -381,6 +386,31 @@ serialAPI.onClosed(() => {
   }
 });
 
+serialAPI.onAgentTx((info) => {
+  txBytes += info.bytes;
+  els.txCounter.textContent = `TX ${formatBytes(txBytes)}`;
+  if (info.hex) {
+    const cleaned = info.data.replace(/[^0-9a-fA-F]/g, '');
+    const pretty = (cleaned.match(/.{2}/g) || []).join(' ').toUpperCase();
+    appendTx(`${info.bytes} bytes`, pretty, true);
+  } else {
+    appendTx(info.data, null, true);
+  }
+});
+
+async function showMcpInfo() {
+  const info = await serialAPI.getMcpInfo();
+  if (info.url) {
+    els.mcpInfo.textContent = `MCP ${info.url}`;
+    els.mcpInfo.classList.add('on');
+  } else {
+    els.mcpInfo.textContent = `MCP off${info.error ? ` (${info.error})` : ''}`;
+    els.mcpInfo.classList.remove('on');
+  }
+}
+
 // initial load
 refreshPorts();
+showMcpInfo();
+setTimeout(showMcpInfo, 1500); // MCP server starts async alongside the window
 setInterval(() => { if (!connected) refreshPorts(); }, 3000);
