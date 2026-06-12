@@ -507,6 +507,9 @@ class _HomePageState extends State<HomePage> {
         items: items,
         onChanged: onChanged,
         isDense: true,
+        // In fixed-width mode, fill the box so long labels ellipsize
+        // instead of overflowing past it.
+        isExpanded: width != null,
         dropdownColor: kInput,
         style: const TextStyle(color: kText, fontSize: 13),
         iconEnabledColor: kTextDim,
@@ -571,9 +574,12 @@ class _HomePageState extends State<HomePage> {
                 for (final p in ports)
                   DropdownMenuItem(
                     value: p.path,
-                    child: Text(p.description.isEmpty
-                        ? p.path
-                        : '${p.path} — ${p.description}'),
+                    child: Text(
+                      p.description.isEmpty
+                          ? p.path
+                          : '${p.path} — ${p.description}',
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   )
               ],
         disabled ? null : (v) => setState(() => selectedPort = v),
