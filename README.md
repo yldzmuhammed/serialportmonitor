@@ -7,6 +7,7 @@ A cross-platform serial port monitor for **macOS, Windows, and Linux**, built wi
 - Auto-discovery of serial ports with manufacturer names (refreshes every 3 s while disconnected)
 - Full connection settings: baud rate (presets + custom), data bits, parity, stop bits, flow control (RTS/CTS, XON/XOFF)
 - **ASCII / HEX / Both** view modes with millisecond timestamps
+- Selectable RX line ending — Auto (any), LF, CR, or CRLF — applied to both the display and the MCP capture buffer (persisted)
 - Send text with selectable line ending (None / LF / CR / CRLF) or raw HEX bytes
 - TX echo, send history (Up/Down arrows), RX/TX byte counters
 - Autoscroll toggle, clear, and save session log to file

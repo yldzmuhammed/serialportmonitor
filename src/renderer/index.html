@@ -72,6 +72,15 @@
         <button id="viewBoth" class="seg">Both</button>
       </div>
     </div>
+    <div class="group">
+      <label for="rxLineEndingSelect" title="Which line ending terminates a received line">RX line end</label>
+      <select id="rxLineEndingSelect">
+        <option value="auto" selected>Auto (any)</option>
+        <option value="lf">LF (\n)</option>
+        <option value="cr">CR (\r)</option>
+        <option value="crlf">CRLF (\r\n)</option>
+      </select>
+    </div>
     <label class="check"><input type="checkbox" id="timestampsChk" checked /> Timestamps</label>
     <label class="check"><input type="checkbox" id="autoscrollChk" checked /> Autoscroll</label>
     <label class="check"><input type="checkbox" id="showTxChk" checked /> Echo TX</label>

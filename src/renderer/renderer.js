@@ -10,6 +10,7 @@ const els = {
   stopBits: document.getElementById('stopBitsSelect'),
   flow: document.getElementById('flowSelect'),
   connectBtn: document.getElementById('connectBtn'),
+  rxLineEnding: document.getElementById('rxLineEndingSelect'),
   viewAscii: document.getElementById('viewAscii'),
   viewHex: document.getElementById('viewHex'),
   viewBoth: document.getElementById('viewBoth'),
@@ -46,7 +47,10 @@ let rxBytes = 0;
 let txBytes = 0;
 let rxLineBuffer = ''; // accumulates partial ASCII lines
 let rxLineEl = null;   // current open RX line element
-let pendingCR = false; // last chunk ended with \r — swallow a leading \n in the next one
+let heldCR = '';       // trailing \r held back until the next chunk decides if it pairs with \n
+let rxLineEndingMode = 'auto'; // auto | lf | cr | crlf
+
+const RX_SPLITTERS = { auto: /\r\n|\n|\r/, lf: /\n/, cr: /\r/, crlf: /\r\n/ };
 let sendHistory = [];
 let historyIndex = -1;
 const logEntries = []; // { time, dir, text }
@@ -64,8 +68,9 @@ function toHex(bytes) {
 }
 
 function toPrintable(text) {
-  // Show control chars (except the ones we render naturally) as dot
-  return text.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '·');
+  // Show control chars as dots (tab stays; line endings are already consumed
+  // by the splitter, so any CR/LF still here is a stray worth seeing)
+  return text.replace(/[\x00-\x08\x0a-\x1f\x7f]/g, '·');
 }
 
 function formatBytes(n) {
@@ -169,15 +174,21 @@ function appendRxChunk(bytes) {
   }
 
   // ASCII mode: split into lines, keep partial line open so chunks join naturally.
-  // A CRLF pair can be split across two chunks — drop the orphaned \n so it
-  // doesn't render as an empty line.
+  // A CRLF pair can be split across two chunks — hold a trailing \r back until
+  // the next chunk shows whether it pairs with \n, so no empty line appears.
   let chunk = text;
-  if (pendingCR && chunk.startsWith('\n')) chunk = chunk.slice(1);
-  pendingCR = chunk.endsWith('\r');
+  if (rxLineEndingMode === 'auto' || rxLineEndingMode === 'crlf') {
+    chunk = heldCR + chunk;
+    heldCR = '';
+    if (chunk.endsWith('\r')) {
+      heldCR = '\r';
+      chunk = chunk.slice(0, -1);
+    }
+  }
   if (chunk.length === 0) return;
 
   rxLineBuffer += chunk;
-  const parts = rxLineBuffer.split(/\r\n|\n|\r/);
+  const parts = rxLineBuffer.split(RX_SPLITTERS[rxLineEndingMode]);
   rxLineBuffer = parts.pop(); // last part is incomplete (or empty if chunk ended with newline)
 
   for (const part of parts) {
@@ -330,7 +341,7 @@ function setViewMode(mode) {
   viewMode = mode;
   rxLineEl = null;
   rxLineBuffer = '';
-  pendingCR = false;
+  heldCR = '';
   els.viewAscii.classList.toggle('active', mode === 'ascii');
   els.viewHex.classList.toggle('active', mode === 'hex');
   els.viewBoth.classList.toggle('active', mode === 'both');
@@ -347,6 +358,14 @@ els.baudSelect.addEventListener('change', () => {
 
 els.connectBtn.addEventListener('click', () => (connected ? disconnect() : connect()));
 
+els.rxLineEnding.addEventListener('change', async () => {
+  rxLineEndingMode = els.rxLineEnding.value;
+  rxLineEl = null;
+  rxLineBuffer = '';
+  heldCR = '';
+  await serialAPI.setRxLineEnding(rxLineEndingMode);
+});
+
 els.viewAscii.addEventListener('click', () => setViewMode('ascii'));
 els.viewHex.addEventListener('click', () => setViewMode('hex'));
 els.viewBoth.addEventListener('click', () => setViewMode('both'));
@@ -355,7 +374,7 @@ els.clearBtn.addEventListener('click', () => {
   els.output.innerHTML = '';
   rxLineEl = null;
   rxLineBuffer = '';
-  pendingCR = false;
+  heldCR = '';
 });
 
 els.saveLogBtn.addEventListener('click', async () => {
@@ -508,6 +527,10 @@ els.mcpCopyBtn.addEventListener('click', async () => {
   await refreshPorts();
   // recover live connection state after a renderer (hot) reload
   const status = await serialAPI.getStatus();
+  if (status.rxLineEnding) {
+    rxLineEndingMode = status.rxLineEnding;
+    els.rxLineEnding.value = status.rxLineEnding;
+  }
   if (status.connected && status.config) {
     syncUiToConfig(status.config);
     appendSystem(`Reconnected to live session: ${status.config.path} @ ${status.config.baudRate} baud`);

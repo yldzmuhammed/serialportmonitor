@@ -20,7 +20,7 @@ function settingsPath() {
 }
 
 function loadSettings() {
-  const defaults = { mcpEnabled: true, mcpPort: DEFAULT_MCP_PORT };
+  const defaults = { mcpEnabled: true, mcpPort: DEFAULT_MCP_PORT, rxLineEnding: 'auto' };
   try {
     return { ...defaults, ...JSON.parse(fs.readFileSync(settingsPath(), 'utf8')) };
   } catch {
@@ -56,7 +56,7 @@ function recordEntry(dir, buffer) {
     seq: captureSeq,
     dir,
     ts: new Date().toISOString(),
-    text: buffer.toString('utf8').replace(/\r?\n$/, ''),
+    text: buffer.toString('utf8').replace(/\r\n$|[\r\n]$/, ''),
     hex: hexPart.toString('hex').replace(/(..)/g, '$1 ').trim()
       + (buffer.length > HEX_MAX_BYTES ? ` … (+${buffer.length - HEX_MAX_BYTES} bytes)` : '')
   });
@@ -81,13 +81,27 @@ function flushRxAssembly() {
   }
 }
 
+const CRLF = Buffer.from('\r\n');
+
 function captureRx(data) {
   rxAssembly = rxAssembly.length ? Buffer.concat([rxAssembly, data]) : data;
 
-  let idx;
-  while ((idx = rxAssembly.indexOf(0x0a)) !== -1) {
-    recordEntry('rx', rxAssembly.subarray(0, idx + 1));
-    rxAssembly = rxAssembly.subarray(idx + 1);
+  const mode = settings ? settings.rxLineEnding : 'auto';
+  while (true) {
+    let idx;
+    let len = 1;
+    if (mode === 'cr') {
+      idx = rxAssembly.indexOf(0x0d);
+    } else if (mode === 'crlf') {
+      idx = rxAssembly.indexOf(CRLF);
+      len = 2;
+    } else {
+      // auto and lf: \n terminates a line (covers both LF and CRLF devices)
+      idx = rxAssembly.indexOf(0x0a);
+    }
+    if (idx === -1) break;
+    recordEntry('rx', rxAssembly.subarray(0, idx + len));
+    rxAssembly = rxAssembly.subarray(idx + len);
   }
 
   if (rxAssembly.length >= RX_ASSEMBLY_MAX) flushRxAssembly();
@@ -268,8 +282,17 @@ ipcMain.handle('serial:open', (_event, options) => openPort(options));
 // e.g. after a hot reload in dev mode.
 ipcMain.handle('serial:status', () => ({
   connected: !!(activePort && activePort.isOpen),
-  config: activeConfig
+  config: activeConfig,
+  rxLineEnding: settings ? settings.rxLineEnding : 'auto'
 }));
+
+ipcMain.handle('serial:setRxLineEnding', (_event, mode) => {
+  if (!['auto', 'lf', 'cr', 'crlf'].includes(mode)) return { ok: false };
+  flushRxAssembly();
+  settings.rxLineEnding = mode;
+  saveSettings();
+  return { ok: true };
+});
 
 ipcMain.handle('serial:close', async () => {
   await closeActivePort();
