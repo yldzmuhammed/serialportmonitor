@@ -904,13 +904,19 @@ class _HomePageState extends State<HomePage> {
           ),
         ),
         const SizedBox(width: 7),
-        Text(statusText,
-            style: const TextStyle(color: kTextDim, fontSize: 12)),
-        const Spacer(),
-        Text(
-          mcp.running ? 'MCP ${mcp.url}' : 'MCP off',
-          style: _monoStyle.copyWith(
-              fontSize: 11, color: mcp.running ? kAgentColor : kTextDim),
+        Expanded(
+          child: Text(statusText,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: kTextDim, fontSize: 12)),
+        ),
+        const SizedBox(width: 10),
+        Flexible(
+          child: Text(
+            mcp.running ? 'MCP ${mcp.url}' : 'MCP off',
+            overflow: TextOverflow.ellipsis,
+            style: _monoStyle.copyWith(
+                fontSize: 11, color: mcp.running ? kAgentColor : kTextDim),
+          ),
         ),
       ]),
     );
