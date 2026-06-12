@@ -40,6 +40,237 @@ class OutputLine {
   OutputLine(this.type, this.ts, this.dir, this.payload, [this.hexPart]);
 }
 
+/// Browses the capture buffer: every line the app has recorded (RX and TX,
+/// up to 5000 entries), independent of what the live display shows.
+class HistoryDialog extends StatefulWidget {
+  final SerialService serial;
+  const HistoryDialog({super.key, required this.serial});
+
+  @override
+  State<HistoryDialog> createState() => _HistoryDialogState();
+}
+
+class _HistoryDialogState extends State<HistoryDialog> {
+  final queryCtrl = TextEditingController();
+  String direction = 'both';
+  Timer? _refreshTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    // keep the view live while data streams in
+    _refreshTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    queryCtrl.dispose();
+    super.dispose();
+  }
+
+  List<CaptureEntry> get _filtered {
+    final q = queryCtrl.text.toLowerCase();
+    return widget.serial.captureBuffer.where((e) {
+      if (direction != 'both' && e.dir != direction) return false;
+      if (q.isNotEmpty && !e.text.toLowerCase().contains(q)) return false;
+      return true;
+    }).toList();
+  }
+
+  String _fmtTs(String iso) {
+    final d = DateTime.tryParse(iso)?.toLocal();
+    if (d == null) return iso;
+    String p(int n, [int w = 2]) => n.toString().padLeft(w, '0');
+    return '${p(d.hour)}:${p(d.minute)}:${p(d.second)}.${p(d.millisecond, 3)}';
+  }
+
+  ButtonStyle get _btn => OutlinedButton.styleFrom(
+        foregroundColor: kText,
+        side: const BorderSide(color: kBorder),
+        backgroundColor: kInput,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        textStyle: const TextStyle(fontSize: 13),
+      );
+
+  Widget _dirChip(String label, String value) {
+    final active = direction == value;
+    return InkWell(
+      onTap: () => setState(() => direction = value),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        color: active ? kAccent : kInput,
+        child: Text(label,
+            style:
+                TextStyle(color: active ? Colors.white : kText, fontSize: 12)),
+      ),
+    );
+  }
+
+  Future<void> _export(List<CaptureEntry> entries) async {
+    final stamp = DateTime.now()
+        .toIso8601String()
+        .replaceAll(RegExp(r'[:.]'), '-')
+        .substring(0, 19);
+    final location =
+        await getSaveLocation(suggestedName: 'serial-history-$stamp.txt');
+    if (location == null) return;
+    final content =
+        '${entries.map((e) => '[${e.ts}] ${e.dir.toUpperCase()} ${e.text}').join('\n')}\n';
+    await File(location.path).writeAsString(content);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final entries = _filtered;
+    final buffer = widget.serial.captureBuffer;
+
+    return Dialog(
+      backgroundColor: kPanel,
+      child: SizedBox(
+        width: 880,
+        height: 620,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+              child: Row(children: [
+                const Text('Capture History',
+                    style: TextStyle(
+                        color: kText,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600)),
+                const SizedBox(width: 12),
+                Text(
+                  '${entries.length} of ${buffer.length} entries'
+                  '${buffer.isEmpty ? '' : ' (seq ${buffer.first.seq}–${buffer.last.seq})'}',
+                  style: const TextStyle(color: kTextDim, fontSize: 12),
+                ),
+                const Spacer(),
+                IconButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.close, size: 18, color: kTextDim),
+                ),
+              ]),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(children: [
+                Expanded(
+                  child: TextField(
+                    controller: queryCtrl,
+                    onChanged: (_) => setState(() {}),
+                    style: const TextStyle(color: kText, fontSize: 13),
+                    decoration: InputDecoration(
+                      hintText: 'Filter text…',
+                      hintStyle: const TextStyle(color: kTextDim),
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 8),
+                      filled: true,
+                      fillColor: kInput,
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(5),
+                        borderSide: const BorderSide(color: kBorder),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(5),
+                        borderSide: const BorderSide(color: kAccent),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(5),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    _dirChip('All', 'both'),
+                    _dirChip('RX', 'rx'),
+                    _dirChip('TX', 'tx'),
+                  ]),
+                ),
+              ]),
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: Container(
+                margin: const EdgeInsets.symmetric(horizontal: 16),
+                decoration: BoxDecoration(
+                  color: kBg,
+                  borderRadius: BorderRadius.circular(5),
+                  border: Border.all(color: kBorder),
+                ),
+                padding: const EdgeInsets.all(8),
+                child: entries.isEmpty
+                    ? const Center(
+                        child: Text('No captured data',
+                            style: TextStyle(color: kTextDim)))
+                    : ListView.builder(
+                        itemCount: entries.length,
+                        itemBuilder: (context, i) {
+                          final e = entries[i];
+                          final isTx = e.dir == 'tx';
+                          return Text.rich(TextSpan(children: [
+                            TextSpan(
+                                text: '${e.seq.toString().padLeft(6)}  ',
+                                style: _monoStyle.copyWith(
+                                    color: kTextDim, fontSize: 11.5)),
+                            TextSpan(
+                                text: '${_fmtTs(e.ts)}  ',
+                                style:
+                                    _monoStyle.copyWith(color: kTextDim)),
+                            TextSpan(
+                                text: isTx ? 'TX> ' : 'RX< ',
+                                style: _monoStyle.copyWith(
+                                    color: isTx ? kTxColor : kGreen,
+                                    fontWeight: FontWeight.w700)),
+                            TextSpan(
+                                text: e.text,
+                                style: _monoStyle.copyWith(
+                                    color: isTx ? kTxColor : kText)),
+                          ]));
+                        },
+                      ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(children: [
+                OutlinedButton(
+                  onPressed:
+                      entries.isEmpty ? null : () => _export(entries),
+                  style: _btn,
+                  child: Text(queryCtrl.text.isEmpty && direction == 'both'
+                      ? 'Export all'
+                      : 'Export filtered (${entries.length})'),
+                ),
+                const SizedBox(width: 10),
+                OutlinedButton(
+                  onPressed: buffer.isEmpty
+                      ? null
+                      : () => setState(() => widget.serial.clearCapture()),
+                  style: _btn.copyWith(
+                    foregroundColor: const WidgetStatePropertyAll(kRed),
+                  ),
+                  child: const Text('Reset Buffer'),
+                ),
+                const Spacer(),
+                OutlinedButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  style: _btn,
+                  child: const Text('Close'),
+                ),
+              ]),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class HomePage extends StatefulWidget {
   final SerialService serial;
   final McpServer mcp;
@@ -724,14 +955,22 @@ class _HomePageState extends State<HomePage> {
           child: const Text('Save Log')),
       OutlinedButton(
         onPressed: () => setState(() {
+          // display only — captured history stays available under History
           lines.clear();
           _openLine = null;
           _rxLineBuffer = '';
           _heldCR = '';
-          serial.clearCapture();
         }),
         style: _outlinedStyle(),
         child: const Text('Clear'),
+      ),
+      OutlinedButton(
+        onPressed: () => showDialog(
+          context: context,
+          builder: (_) => HistoryDialog(serial: serial),
+        ),
+        style: _outlinedStyle(),
+        child: const Text('History'),
       ),
       OutlinedButton(
         onPressed: () => setState(() => mcpBarVisible = !mcpBarVisible),
