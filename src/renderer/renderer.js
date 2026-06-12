@@ -46,6 +46,7 @@ let rxBytes = 0;
 let txBytes = 0;
 let rxLineBuffer = ''; // accumulates partial ASCII lines
 let rxLineEl = null;   // current open RX line element
+let pendingCR = false; // last chunk ended with \r — swallow a leading \n in the next one
 let sendHistory = [];
 let historyIndex = -1;
 const logEntries = []; // { time, dir, text }
@@ -167,8 +168,15 @@ function appendRxChunk(bytes) {
     return;
   }
 
-  // ASCII mode: split into lines, keep partial line open so chunks join naturally
-  rxLineBuffer += text;
+  // ASCII mode: split into lines, keep partial line open so chunks join naturally.
+  // A CRLF pair can be split across two chunks — drop the orphaned \n so it
+  // doesn't render as an empty line.
+  let chunk = text;
+  if (pendingCR && chunk.startsWith('\n')) chunk = chunk.slice(1);
+  pendingCR = chunk.endsWith('\r');
+  if (chunk.length === 0) return;
+
+  rxLineBuffer += chunk;
   const parts = rxLineBuffer.split(/\r\n|\n|\r/);
   rxLineBuffer = parts.pop(); // last part is incomplete (or empty if chunk ended with newline)
 
@@ -322,6 +330,7 @@ function setViewMode(mode) {
   viewMode = mode;
   rxLineEl = null;
   rxLineBuffer = '';
+  pendingCR = false;
   els.viewAscii.classList.toggle('active', mode === 'ascii');
   els.viewHex.classList.toggle('active', mode === 'hex');
   els.viewBoth.classList.toggle('active', mode === 'both');
@@ -346,6 +355,7 @@ els.clearBtn.addEventListener('click', () => {
   els.output.innerHTML = '';
   rxLineEl = null;
   rxLineBuffer = '';
+  pendingCR = false;
 });
 
 els.saveLogBtn.addEventListener('click', async () => {
@@ -405,8 +415,7 @@ serialAPI.onAgentTx((info) => {
   }
 });
 
-serialAPI.onOpened((options) => {
-  // Port was opened by an MCP agent — sync the UI controls to its config
+function syncUiToConfig(options) {
   if (![...els.portSelect.options].some((o) => o.value === options.path)) {
     const opt = document.createElement('option');
     opt.value = options.path;
@@ -431,6 +440,10 @@ serialAPI.onOpened((options) => {
   els.flow.value = options.flowControl;
 
   setConnectedState(true);
+}
+
+serialAPI.onOpened((options) => {
+  syncUiToConfig(options);
   appendSystem(`Port opened by agent: ${options.path} @ ${options.baudRate} baud`);
 });
 
@@ -491,7 +504,15 @@ els.mcpCopyBtn.addEventListener('click', async () => {
 });
 
 // initial load
-refreshPorts();
+(async () => {
+  await refreshPorts();
+  // recover live connection state after a renderer (hot) reload
+  const status = await serialAPI.getStatus();
+  if (status.connected && status.config) {
+    syncUiToConfig(status.config);
+    appendSystem(`Reconnected to live session: ${status.config.path} @ ${status.config.baudRate} baud`);
+  }
+})();
 showMcpInfo();
 setTimeout(showMcpInfo, 1500); // MCP server starts async alongside the window
 setInterval(() => { if (!connected) refreshPorts(); }, 3000);

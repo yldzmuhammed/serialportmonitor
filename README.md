@@ -20,6 +20,8 @@ npm install
 npm start
 ```
 
+For development, `npm run dev` runs the app with hot reload (via electronmon): UI file changes reload the window in place — the serial connection survives and the UI re-syncs to it — and main-process changes restart the app.
+
 ## Build installers
 
 ```bash
@@ -53,7 +55,7 @@ Tools exposed:
 | `close_port` | Close the current port |
 | `send_data` | Transmit text or hex through the open port (echoed in the UI as purple `AI>` lines) |
 
-The capture buffer holds the most recent 5000 RX/TX chunks with timestamps, text, and hex representations. The server binds to localhost only.
+Incoming bytes are assembled into complete lines before being recorded (a 300 ms flush timer catches partial lines and non-line-based protocols), so each `read_data` entry is one line of device output with timestamp, text, and hex forms. The buffer holds the most recent 5000 entries. The server binds to localhost only.
 
 ## Platform notes
 

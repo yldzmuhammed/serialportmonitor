@@ -47,18 +47,53 @@ let captureSeq = 0;
 let rxTotal = 0;
 let txTotal = 0;
 
+const HEX_MAX_BYTES = 256;
+
 function recordEntry(dir, buffer) {
   captureSeq += 1;
+  const hexPart = buffer.subarray(0, HEX_MAX_BYTES);
   captureBuffer.push({
     seq: captureSeq,
     dir,
     ts: new Date().toISOString(),
-    text: buffer.toString('utf8'),
-    hex: buffer.toString('hex').replace(/(..)/g, '$1 ').trim()
+    text: buffer.toString('utf8').replace(/\r?\n$/, ''),
+    hex: hexPart.toString('hex').replace(/(..)/g, '$1 ').trim()
+      + (buffer.length > HEX_MAX_BYTES ? ` … (+${buffer.length - HEX_MAX_BYTES} bytes)` : '')
   });
   if (captureBuffer.length > CAPTURE_MAX_ENTRIES) {
     captureBuffer.splice(0, captureBuffer.length - CAPTURE_MAX_ENTRIES);
   }
+}
+
+// RX line assembly: serial data arrives in arbitrary USB-sized fragments, so
+// chunks are glued together and recorded one complete line per entry. A flush
+// timer catches non-line-based protocols and trailing partial lines.
+const RX_FLUSH_MS = 300;
+const RX_ASSEMBLY_MAX = 4096;
+let rxAssembly = Buffer.alloc(0);
+let rxFlushTimer = null;
+
+function flushRxAssembly() {
+  if (rxFlushTimer) { clearTimeout(rxFlushTimer); rxFlushTimer = null; }
+  if (rxAssembly.length) {
+    recordEntry('rx', rxAssembly);
+    rxAssembly = Buffer.alloc(0);
+  }
+}
+
+function captureRx(data) {
+  rxAssembly = rxAssembly.length ? Buffer.concat([rxAssembly, data]) : data;
+
+  let idx;
+  while ((idx = rxAssembly.indexOf(0x0a)) !== -1) {
+    recordEntry('rx', rxAssembly.subarray(0, idx + 1));
+    rxAssembly = rxAssembly.subarray(idx + 1);
+  }
+
+  if (rxAssembly.length >= RX_ASSEMBLY_MAX) flushRxAssembly();
+
+  if (rxFlushTimer) clearTimeout(rxFlushTimer);
+  rxFlushTimer = rxAssembly.length ? setTimeout(flushRxAssembly, RX_FLUSH_MS) : null;
 }
 
 // ---------- window ----------
@@ -85,6 +120,7 @@ function createWindow() {
 // ---------- serial port ----------
 
 function closeActivePort() {
+  flushRxAssembly();
   return new Promise((resolve) => {
     if (activePort && activePort.isOpen) {
       activePort.close(() => { activePort = null; activeConfig = null; resolve(); });
@@ -135,10 +171,11 @@ async function openPort(options) {
       activeConfig = { ...options };
       rxTotal = 0;
       txTotal = 0;
+      rxAssembly = Buffer.alloc(0);
 
       port.on('data', (data) => {
         rxTotal += data.length;
-        recordEntry('rx', data);
+        captureRx(data);
         if (mainWindow) mainWindow.webContents.send('serial:data', data);
       });
 
@@ -226,6 +263,13 @@ function mcpStatus() {
 
 ipcMain.handle('serial:list', () => listPorts());
 ipcMain.handle('serial:open', (_event, options) => openPort(options));
+
+// Lets a freshly (re)loaded renderer recover the live connection state,
+// e.g. after a hot reload in dev mode.
+ipcMain.handle('serial:status', () => ({
+  connected: !!(activePort && activePort.isOpen),
+  config: activeConfig
+}));
 
 ipcMain.handle('serial:close', async () => {
   await closeActivePort();
