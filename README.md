@@ -2,6 +2,8 @@
 
 A cross-platform serial port monitor for **macOS, Windows, and Linux**, built with Electron and [node-serialport](https://serialport.io/).
 
+> There is also a **Flutter rewrite** with the same features in [flutter/](flutter/) — native binaries, much smaller footprint. This Electron version is preserved on the `electron` branch and tag `v1.0.0-electron`.
+
 ## Features
 
 - Auto-discovery of serial ports with manufacturer names (refreshes every 3 s while disconnected)
