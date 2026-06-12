@@ -207,7 +207,7 @@ class McpServer {
     {
       'name': 'read_data',
       'description':
-          "Read captured serial traffic (RX and TX) from the monitor's buffer. This is a passive read of already-captured data — it never touches the port or interferes with the stream. Incoming bytes are assembled into one entry per line. Poll incrementally by passing the latest_seq from the previous call as since_seq.",
+          "Read captured serial traffic (RX and TX) from the monitor's buffer (holds the most recent 5000 entries, one per line). This is a passive read of already-captured data — it never touches the port or interferes with the stream. Without since_seq you get the newest entries. With since_seq you get the OLDEST entries after that cursor, so you can page through the entire buffer: start with since_seq = oldest_seq - 1 (from get_status) and repeat with the last seq received until entries is empty. For live tailing, poll with the latest_seq from the previous call.",
       'inputSchema': {
         'type': 'object',
         'properties': {

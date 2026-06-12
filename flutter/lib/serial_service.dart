@@ -361,7 +361,13 @@ class SerialService {
     }
     var list = entries.toList();
     final truncated = list.length > maxEntries;
-    if (truncated) list = list.sublist(list.length - maxEntries);
+    if (truncated) {
+      // since_seq set: page forward (oldest first) so a client can walk the
+      // entire buffer without gaps. No cursor: tail of the live stream.
+      list = sinceSeq > 0
+          ? list.sublist(0, maxEntries)
+          : list.sublist(list.length - maxEntries);
+    }
 
     return {
       'latest_seq': captureSeq,
