@@ -322,6 +322,14 @@ class SerialService {
         : null;
   }
 
+  /// Clears captured data and byte counters. Sequence numbers keep counting
+  /// up so MCP clients polling with since_seq never see duplicates.
+  void clearCapture() {
+    captureBuffer.clear();
+    rxTotal = 0;
+    txTotal = 0;
+  }
+
   // ---------- MCP-facing views ----------
 
   Map<String, dynamic> mcpStatus() => {

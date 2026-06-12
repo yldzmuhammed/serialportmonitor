@@ -728,6 +728,7 @@ class _HomePageState extends State<HomePage> {
           _openLine = null;
           _rxLineBuffer = '';
           _heldCR = '';
+          serial.clearCapture();
         }),
         style: _outlinedStyle(),
         child: const Text('Clear'),
