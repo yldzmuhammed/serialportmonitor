@@ -812,15 +812,16 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _output() {
+    // No SelectionArea: it tracks every Text in the list, and with lines
+    // being added/removed hundreds of times per second the stale selectable
+    // references crash the engine's text layout. Use Save Log to copy data.
     return Container(
       color: kBg,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      child: SelectionArea(
-        child: ListView.builder(
-          controller: scrollCtrl,
-          itemCount: lines.length,
-          itemBuilder: (context, i) => _lineWidget(lines[i]),
-        ),
+      child: ListView.builder(
+        controller: scrollCtrl,
+        itemCount: lines.length,
+        itemBuilder: (context, i) => _lineWidget(lines[i]),
       ),
     );
   }

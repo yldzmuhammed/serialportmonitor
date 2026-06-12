@@ -69,8 +69,7 @@ class SerialService {
   SerialService(this.settings);
 
   SerialPort? _port;
-  SerialPortReader? _reader;
-  StreamSubscription<Uint8List>? _readerSub;
+  Timer? _readTimer;
   SerialConfig? activeConfig;
 
   bool get connected => _port?.isOpen ?? false;
@@ -155,13 +154,26 @@ class SerialService {
     txTotal = 0;
     _rxAssembly = [];
 
-    _reader = SerialPortReader(port);
-    _readerSub = _reader!.stream.listen((data) {
-      rxTotal += data.length;
-      _captureRx(data);
-      rxChunks.add(data);
-    }, onError: (Object e) {
-      events.add(SerialEvent('error', e.toString()));
+    // Poll for incoming bytes on the main isolate instead of using
+    // SerialPortReader: its background isolate runs a synchronous loop that
+    // Isolate.kill() can never stop, so it keeps calling sp_wait() on the
+    // port after the port is freed — heap corruption and random crashes.
+    // Non-blocking polling every 10 ms is cheap and fully deterministic.
+    _readTimer = Timer.periodic(const Duration(milliseconds: 10), (_) {
+      final p = _port;
+      if (p == null || !p.isOpen) return;
+      try {
+        final available = p.bytesAvailable;
+        if (available <= 0) return;
+        final data = p.read(available.clamp(1, 16384), timeout: 100);
+        if (data.isEmpty) return;
+        rxTotal += data.length;
+        _captureRx(data);
+        rxChunks.add(data);
+      } catch (e) {
+        events.add(SerialEvent('error', e.toString()));
+        close(); // device likely unplugged
+      }
     });
 
     events.add(SerialEvent('opened', {'config': cfg, 'byAgent': byAgent}));
@@ -173,10 +185,8 @@ class SerialService {
     _flushRxAssembly();
     final wasOpen = connected;
 
-    await _readerSub?.cancel();
-    _readerSub = null;
-    _reader?.close();
-    _reader = null;
+    _readTimer?.cancel();
+    _readTimer = null;
     if (_port != null) {
       try {
         _port!.close();
