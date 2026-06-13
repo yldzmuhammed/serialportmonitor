@@ -145,6 +145,8 @@ class McpServer {
           maxEntries: ((args['max_entries'] as num?)?.toInt() ?? 200)
               .clamp(1, 1000),
           direction: args['direction'] as String? ?? 'both',
+          query: args['query'] as String?,
+          isRegex: args['regex'] == true,
         );
       case 'open_port':
         final path = args['path'] as String?;
@@ -223,6 +225,15 @@ class McpServer {
             'type': 'string',
             'enum': ['rx', 'tx', 'both'],
             'description': 'Filter by direction (default both)',
+          },
+          'query': {
+            'type': 'string',
+            'description':
+                'Search the buffer: only return entries whose text matches (case-insensitive substring, or regex when regex=true). Combines with direction and since_seq.',
+          },
+          'regex': {
+            'type': 'boolean',
+            'description': 'Treat query as a regular expression (default false)',
           },
         },
       },

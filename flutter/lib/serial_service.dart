@@ -353,11 +353,30 @@ class SerialService {
         },
       };
 
-  Map<String, dynamic> readData(
-      {int sinceSeq = 0, int maxEntries = 200, String direction = 'both'}) {
+  Map<String, dynamic> readData({
+    int sinceSeq = 0,
+    int maxEntries = 200,
+    String direction = 'both',
+    String? query,
+    bool isRegex = false,
+  }) {
     var entries = captureBuffer.where((e) => e.seq > sinceSeq);
     if (direction != 'both') {
       entries = entries.where((e) => e.dir == direction);
+    }
+    if (query != null && query.isNotEmpty) {
+      if (isRegex) {
+        final RegExp re;
+        try {
+          re = RegExp(query, caseSensitive: false);
+        } on FormatException catch (e) {
+          return {'error': 'Invalid regex: ${e.message}'};
+        }
+        entries = entries.where((e) => re.hasMatch(e.text));
+      } else {
+        final q = query.toLowerCase();
+        entries = entries.where((e) => e.text.toLowerCase().contains(q));
+      }
     }
     var list = entries.toList();
     final truncated = list.length > maxEntries;
