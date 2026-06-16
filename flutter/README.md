@@ -1,6 +1,12 @@
-# Serial Port Monitor (Flutter)
+# Port Monitor (Flutter)
 
-Flutter rewrite of the serial port monitor for macOS, Windows, and Linux. Native binaries, no bundled browser — a fraction of the Electron version's size and memory.
+Flutter app for macOS, Windows, and Linux: a serial port monitor plus a local-network IP scanner. Native binaries, no bundled browser — a fraction of the Electron version's size and memory.
+
+## IP Scanner
+
+The **Network** tab discovers devices on your local /24 subnet. It ping-sweeps the subnet to populate the ARP cache, reads the ARP table for IP↔MAC pairs, resolves manufacturer from the bundled IEEE OUI database (`assets/oui.csv`), and names hosts via reverse DNS. Live table shows online/offline dot, name, IP, MAC, manufacturer, and last-seen time, with a filter box and periodic rescan. Passive — only ordinary ICMP/ARP traffic.
+
+## Serial Monitor
 
 Feature parity with the Electron app:
 
