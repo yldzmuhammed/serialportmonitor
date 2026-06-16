@@ -57,19 +57,30 @@ class SerialConfig extends ConnConfig {
 
 class NetConfig extends ConnConfig {
   final String protocol; // tcp | udp
-  final String host;
+  final String host; // peer (client) or bind address (server)
   final int port;
+  final bool server; // true = listen/accept, false = connect
 
-  NetConfig({required this.protocol, required this.host, required this.port});
+  NetConfig({
+    required this.protocol,
+    required this.host,
+    required this.port,
+    this.server = false,
+  });
 
   @override
-  String get kind => protocol;
+  String get kind => server ? '$protocol-server' : protocol;
   @override
-  String get label => '$protocol $host:$port';
+  String get label =>
+      server ? '$protocol-server :$port' : '$protocol $host:$port';
 
   @override
-  Map<String, dynamic> toJson() =>
-      {'protocol': protocol, 'host': host, 'port': port};
+  Map<String, dynamic> toJson() => {
+        'protocol': protocol,
+        'host': host,
+        'port': port,
+        'server': server,
+      };
 }
 
 class CaptureEntry {
@@ -103,6 +114,8 @@ class SerialService {
   SerialPort? _port;
   Timer? _readTimer;
   Socket? _tcp;
+  ServerSocket? _tcpServer;
+  final List<Socket> _tcpClients = [];
   RawDatagramSocket? _udp;
   InternetAddress? _udpRemote;
   int _udpPort = 0;
@@ -111,7 +124,10 @@ class SerialService {
   ConnConfig? activeConfig;
 
   bool get connected =>
-      (_port?.isOpen ?? false) || _tcp != null || _udp != null;
+      (_port?.isOpen ?? false) ||
+      _tcp != null ||
+      _tcpServer != null ||
+      _udp != null;
 
   /// Serial path of the active connection, or null when none/network.
   String? get serialPath =>
@@ -246,7 +262,44 @@ class SerialService {
     await close(silent: true);
 
     try {
-      if (cfg.protocol == 'tcp') {
+      if (cfg.server && cfg.protocol == 'tcp') {
+        final bind = cfg.host.isEmpty ? '0.0.0.0' : cfg.host;
+        final srv = await ServerSocket.bind(bind, cfg.port);
+        _tcpServer = srv;
+        _netSub = srv.listen((client) {
+          _tcpClients.add(client);
+          events.add(SerialEvent('note',
+              'Client connected: ${client.remoteAddress.address}:${client.remotePort} (${_tcpClients.length} total)'));
+          client.listen(
+            (d) => _ingest(d),
+            onError: (Object _) {
+              client.destroy();
+              _tcpClients.remove(client);
+            },
+            onDone: () {
+              _tcpClients.remove(client);
+              events.add(SerialEvent('note',
+                  'Client disconnected (${_tcpClients.length} total)'));
+            },
+            cancelOnError: true,
+          );
+        });
+      } else if (cfg.server) {
+        // UDP server: bind the port, reply to whoever last sent.
+        final s = await RawDatagramSocket.bind(
+            InternetAddress.anyIPv4, cfg.port);
+        _udp = s;
+        _netSub = s.listen((event) {
+          if (event == RawSocketEvent.read) {
+            final dg = s.receive();
+            if (dg != null) {
+              _udpRemote = dg.address;
+              _udpPort = dg.port;
+              _ingest(dg.data);
+            }
+          }
+        });
+      } else if (cfg.protocol == 'tcp') {
         final s = await Socket.connect(cfg.host, cfg.port,
             timeout: const Duration(seconds: 5));
         _tcp = s;
@@ -319,6 +372,14 @@ class SerialService {
       _tcp?.destroy();
     } catch (_) {}
     _tcp = null;
+    for (final c in _tcpClients) {
+      try {
+        c.destroy();
+      } catch (_) {}
+    }
+    _tcpClients.clear();
+    await _tcpServer?.close();
+    _tcpServer = null;
     _udp?.close();
     _udp = null;
     _udpRemote = null;
@@ -357,11 +418,23 @@ class SerialService {
 
     int written;
     try {
-      if (_tcp != null) {
+      if (_tcpServer != null) {
+        if (_tcpClients.isEmpty) {
+          return {'ok': false, 'error': 'No clients connected'};
+        }
+        for (final c in _tcpClients) {
+          c.add(buf);
+        }
+        await Future.wait(_tcpClients.map((c) => c.flush()));
+        written = buf.length;
+      } else if (_tcp != null) {
         _tcp!.add(buf);
         await _tcp!.flush();
         written = buf.length;
       } else if (_udp != null) {
+        if (_udpRemote == null) {
+          return {'ok': false, 'error': 'No client has sent yet (no peer)'};
+        }
         written = _udp!.send(buf, _udpRemote!, _udpPort);
       } else {
         written = _port!.write(buf);

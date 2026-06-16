@@ -543,6 +543,8 @@ class _HomePageState extends State<HomePage> {
       case 'closed':
         setState(() => connected = false);
         _appendSystem('Port closed');
+      case 'note':
+        _appendSystem('${event.payload}');
       case 'error':
         _appendSystem('Port error: ${event.payload}');
       case 'agentTx':
@@ -611,9 +613,11 @@ class _HomePageState extends State<HomePage> {
     }
 
     if (transport != 'serial') {
+      final server = transport.endsWith('-server');
+      final proto = transport.split('-').first; // tcp | udp
       final host = hostCtrl.text.trim();
       final p = int.tryParse(netPortCtrl.text.trim()) ?? 0;
-      if (host.isEmpty) {
+      if (!server && host.isEmpty) {
         _appendSystem('Enter a host');
         return;
       }
@@ -621,10 +625,12 @@ class _HomePageState extends State<HomePage> {
         _appendSystem('Invalid port number');
         return;
       }
-      final result = await serial
-          .openNet(NetConfig(protocol: transport, host: host, port: p));
+      final result = await serial.openNet(NetConfig(
+          protocol: proto, host: host, port: p, server: server));
       if (result['ok'] != true) {
-        _appendSystem('Failed to open $transport $host:$p: ${result['error']}');
+        _appendSystem('Failed to open $transport: ${result['error']}');
+      } else if (server) {
+        _appendSystem('Listening on $proto port $p');
       }
       return;
     }
@@ -860,8 +866,19 @@ class _HomePageState extends State<HomePage> {
       _label('Type'),
       _dropdown(
           transport,
-          _items(['serial', 'tcp', 'udp'],
-              {'serial': 'Serial', 'tcp': 'TCP', 'udp': 'UDP'}),
+          _items([
+            'serial',
+            'tcp',
+            'udp',
+            'tcp-server',
+            'udp-server'
+          ], {
+            'serial': 'Serial',
+            'tcp': 'TCP client',
+            'udp': 'UDP client',
+            'tcp-server': 'TCP server',
+            'udp-server': 'UDP server',
+          }),
           disabled ? null : (v) => setState(() => transport = v!)),
       if (transport == 'serial') ...[
         _label('Port'),
@@ -938,14 +955,15 @@ class _HomePageState extends State<HomePage> {
                 {'none': 'None', 'rtscts': 'RTS/CTS', 'xonxoff': 'XON/XOFF'}),
             disabled ? null : (v) => setState(() => flow = v!)),
       ] else ...[
-        _label('Host'),
+        _label(transport.endsWith('-server') ? 'Bind' : 'Host'),
         SizedBox(
           width: 160,
           child: TextField(
             controller: hostCtrl,
             enabled: !disabled,
             style: const TextStyle(color: kText, fontSize: 13),
-            decoration: _inputDecoration('host or IP'),
+            decoration: _inputDecoration(
+                transport.endsWith('-server') ? '0.0.0.0 (all)' : 'host or IP'),
           ),
         ),
         _label('Port'),
@@ -1287,8 +1305,9 @@ class _HomePageState extends State<HomePage> {
       statusText = 'Connected — ${cfg.path} @ ${cfg.baudRate} baud, '
           '${cfg.dataBits}${cfg.parity[0].toUpperCase()}${cfg.stopBits}';
     } else if (connected && cfg is NetConfig) {
-      statusText =
-          'Connected — ${cfg.protocol.toUpperCase()} ${cfg.host}:${cfg.port}';
+      statusText = cfg.server
+          ? 'Listening — ${cfg.protocol.toUpperCase()} server :${cfg.port}'
+          : 'Connected — ${cfg.protocol.toUpperCase()} ${cfg.host}:${cfg.port}';
     } else {
       statusText = 'Disconnected';
     }

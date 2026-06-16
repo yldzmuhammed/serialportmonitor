@@ -225,12 +225,16 @@ class McpServer {
         if (proto != 'tcp' && proto != 'udp') {
           return _toolError('protocol must be "tcp" or "udp"');
         }
+        final server = args['server'] == true;
         final host = args['host'] as String?;
         final sport = (args['port'] as num?)?.toInt();
-        if (host == null || host.isEmpty || sport == null) {
-          return _toolError('open_socket requires "host" and "port"');
+        if (sport == null || (!server && (host == null || host.isEmpty))) {
+          return _toolError(server
+              ? 'open_socket server requires "port"'
+              : 'open_socket requires "host" and "port"');
         }
-        final ncfg = NetConfig(protocol: proto, host: host, port: sport);
+        final ncfg = NetConfig(
+            protocol: proto, host: host ?? '', port: sport, server: server);
         if (sessions.any((s) => s.activeConfig?.label == ncfg.label)) {
           return _toolError('${ncfg.label} is already open in another tab.');
         }
@@ -373,7 +377,7 @@ class McpServer {
     {
       'name': 'open_socket',
       'description':
-          'Open a TCP or UDP network connection in the active tab. TCP connects to host:port; UDP binds a local socket and exchanges datagrams with host:port. Received bytes flow into the same capture buffer as serial data. The connection is labelled "<proto> <host>:<port>" — use that as the "port" argument to other tools.',
+          'Open a TCP or UDP network connection in the active tab. As a client (default) it connects to host:port. As a server (server=true) it listens on port: TCP accepts clients and broadcasts sends to all of them; UDP binds the port and replies to whoever last sent. Received bytes flow into the same capture buffer as serial data. Labels: client "<proto> <host>:<port>", server "<proto>-server :<port>" — use as the "port" argument to other tools.',
       'inputSchema': {
         'type': 'object',
         'properties': {
@@ -382,16 +386,22 @@ class McpServer {
             'enum': ['tcp', 'udp'],
             'description': 'Transport (default tcp)',
           },
+          'server': {
+            'type': 'boolean',
+            'description':
+                'Listen/accept instead of connect (default false = client)',
+          },
           'host': {
             'type': 'string',
-            'description': 'Hostname or IP address',
+            'description':
+                'Client: host/IP to connect to (required). Server: bind address (optional, default 0.0.0.0).',
           },
           'port': {
             'type': 'integer',
             'description': 'TCP/UDP port number',
           },
         },
-        'required': ['host', 'port'],
+        'required': ['port'],
       },
     },
     {
