@@ -316,6 +316,8 @@ class _HomePageState extends State<HomePage> {
   bool timestamps = true;
   bool autoscroll = true;
   bool echoTx = true;
+  bool terminalMode = false;
+  final outputFocus = FocusNode();
 
   // output
   final List<OutputLine> lines = [];
@@ -352,6 +354,9 @@ class _HomePageState extends State<HomePage> {
 
     _chunkSub = serial.rxChunks.stream.listen(_onChunk);
     _eventSub = serial.events.stream.listen(_onEvent);
+    outputFocus.addListener(() {
+      if (mounted) setState(() {}); // repaint terminal focus border
+    });
   }
 
   @override
@@ -367,6 +372,7 @@ class _HomePageState extends State<HomePage> {
     hostCtrl.dispose();
     netPortCtrl.dispose();
     mcpPortCtrl.dispose();
+    outputFocus.dispose();
     super.dispose();
   }
 
@@ -1008,6 +1014,14 @@ class _HomePageState extends State<HomePage> {
       _check('Timestamps', timestamps, (v) => setState(() => timestamps = v)),
       _check('Autoscroll', autoscroll, (v) => setState(() => autoscroll = v)),
       _check('Echo TX', echoTx, (v) => setState(() => echoTx = v)),
+      _check('Terminal', terminalMode, (v) {
+        setState(() => terminalMode = v);
+        if (v) {
+          outputFocus.requestFocus();
+        } else {
+          outputFocus.unfocus();
+        }
+      }),
       Container(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
         decoration: BoxDecoration(
@@ -1128,15 +1142,59 @@ class _HomePageState extends State<HomePage> {
     // No SelectionArea: it tracks every Text in the list, and with lines
     // being added/removed hundreds of times per second the stale selectable
     // references crash the engine's text layout. Use Save Log to copy data.
+    final list = ListView.builder(
+      controller: scrollCtrl,
+      itemCount: lines.length,
+      itemBuilder: (context, i) => _lineWidget(lines[i]),
+    );
+
+    // Terminal mode: the output area takes focus and forwards keystrokes
+    // straight to the connection, like a serial console.
+    final body = terminalMode
+        ? GestureDetector(
+            onTap: () => outputFocus.requestFocus(),
+            child: Focus(
+              focusNode: outputFocus,
+              onKeyEvent: _onTerminalKey,
+              child: list,
+            ),
+          )
+        : list;
+
     return Container(
       color: kBg,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      child: ListView.builder(
-        controller: scrollCtrl,
-        itemCount: lines.length,
-        itemBuilder: (context, i) => _lineWidget(lines[i]),
-      ),
+      decoration: terminalMode && outputFocus.hasFocus
+          ? BoxDecoration(
+              color: kBg, border: Border.all(color: kAccent, width: 1))
+          : const BoxDecoration(color: kBg),
+      child: body,
     );
+  }
+
+  KeyEventResult _onTerminalKey(FocusNode node, KeyEvent e) {
+    if (!terminalMode || !connected) return KeyEventResult.ignored;
+    if (e is! KeyDownEvent && e is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    final k = e.logicalKey;
+    String? out;
+    if (k == LogicalKeyboardKey.enter ||
+        k == LogicalKeyboardKey.numpadEnter) {
+      out = '\r';
+    } else if (k == LogicalKeyboardKey.backspace) {
+      out = '\x7f';
+    } else if (k == LogicalKeyboardKey.tab) {
+      out = '\t';
+    } else if (k == LogicalKeyboardKey.escape) {
+      out = '\x1b';
+    } else {
+      final c = e.character;
+      if (c != null && c.isNotEmpty && c.codeUnitAt(0) >= 0x20) out = c;
+    }
+    if (out == null) return KeyEventResult.ignored;
+    serial.write(data: out, lineEnding: '');
+    return KeyEventResult.handled;
   }
 
   Widget _lineWidget(OutputLine line) {

@@ -20,6 +20,7 @@ Feature parity with the Electron app:
 - ASCII / HEX / Both views, timestamps, autoscroll, TX echo, RX/TX counters
 - Selectable RX line ending (Auto / LF / CR / CRLF) applied to display and capture
 - Send text with line ending or raw hex; Up/Down send history
+- **Terminal mode** — toggle to type directly in the output area; keystrokes (incl. Enter→CR, Backspace→DEL, Tab, Esc) go straight to the connection like a serial console
 - Save session log
 - **History viewer** — browse the full capture buffer (independent of the display) with text filter, RX/TX filter, export, and buffer reset; Clear only wipes the screen
 - Embedded MCP server (Streamable HTTP on `127.0.0.1:8765/mcp`, configurable via the MCP ⚙ panel, persisted settings) with the same six tools: `list_ports`, `get_status`, `read_data`, `open_port`, `close_port`, `send_data`
