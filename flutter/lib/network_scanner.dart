@@ -174,14 +174,16 @@ class NetworkScanner {
         return;
       }
 
-      // 1. Ping sweep to populate the ARP cache (pooled).
+      // 1. Ping sweep to populate the ARP cache (pooled), and browse Bonjour
+      //    for friendly device names concurrently.
       final hosts = [for (var i = 1; i <= 254; i++) '${net.base}.$i'];
+      final bonjourFuture = _bonjourNames();
       await _pool(hosts, pingPool, _ping);
 
       // 2. ARP table → ip/mac pairs.
       final arp = await _readArp();
 
-      // 3. Resolve names: mDNS/Bonjour first, reverse DNS fallback (pooled).
+      // 3. Resolve names: reverse mDNS, reverse DNS fallback (pooled).
       final names = <String, String?>{};
       final mdns = MDnsClient();
       var mdnsUp = false;
@@ -195,6 +197,10 @@ class NetworkScanner {
       });
       if (mdnsUp) mdns.stop();
 
+      // Friendly Bonjour names win over reverse lookups.
+      final bonjour = await bonjourFuture;
+      String? nameFor(String ip) => bonjour[ip] ?? names[ip];
+
       final now = DateTime.now();
       final seen = <String>{net.selfIp};
 
@@ -206,7 +212,7 @@ class NetworkScanner {
         ..lastSeen = now
         ..mac = selfMac
         ..vendor = _vendorFor(selfMac)
-        ..hostname = Platform.localHostname;
+        ..hostname = nameFor(net.selfIp) ?? Platform.localHostname;
 
       for (final entry in arp.entries) {
         final ip = entry.key;
@@ -217,7 +223,7 @@ class NetworkScanner {
         dev
           ..mac = mac
           ..vendor = _vendorFor(mac)
-          ..hostname = names[ip] ?? dev.hostname
+          ..hostname = nameFor(ip) ?? dev.hostname
           ..lastSeen = now
           ..online = true;
       }
@@ -329,6 +335,128 @@ class NetworkScanner {
       }
     } catch (_) {}
     return null;
+  }
+
+  // ---------- forward Bonjour browsing ----------
+
+  // Identity-rich service types, ordered best-name-first. The instance label
+  // of these is the human name ("Byron's MacBook Pro", "Living Room").
+  static const _serviceTypes = [
+    '_companion-link._tcp.local', // Apple devices
+    '_airplay._tcp.local',
+    '_raop._tcp.local', // AirPlay audio: "MAC@Name"
+    '_googlecast._tcp.local', // Chromecast (friendly name in TXT fn=)
+    '_smb._tcp.local',
+    '_afpovertcp._tcp.local',
+    '_ssh._tcp.local',
+    '_sftp-ssh._tcp.local',
+    '_workstation._tcp.local', // avahi: "host [mac]"
+    '_device-info._tcp.local',
+    '_spotify-connect._tcp.local',
+    '_printer._tcp.local',
+    '_ipp._tcp.local',
+  ];
+
+  /// Browses Bonjour service types, resolves each instance to its IPv4
+  /// address, and returns ip→friendly-name. Best-effort within a time budget.
+  Future<Map<String, String>> _bonjourNames() async {
+    final result = <String, String>{};
+    final client = MDnsClient();
+    try {
+      await client.start();
+    } catch (_) {
+      return result;
+    }
+    try {
+      await Future.wait(
+          _serviceTypes.map((t) => _browse(client, t, result)));
+    } catch (_) {}
+    client.stop();
+    return result;
+  }
+
+  Future<void> _browse(
+      MDnsClient client, String type, Map<String, String> result) async {
+    try {
+      await for (final ptr in client
+          .lookup<PtrResourceRecord>(ResourceRecordQuery.serverPointer(type))
+          .timeout(const Duration(seconds: 3), onTimeout: (s) => s.close())) {
+        final instance = ptr.domainName;
+        final friendly = _friendlyName(instance, type, client);
+        // resolve instance → host → IPv4
+        try {
+          await for (final srv in client
+              .lookup<SrvResourceRecord>(
+                  ResourceRecordQuery.service(instance))
+              .timeout(const Duration(milliseconds: 1200),
+                  onTimeout: (s) => s.close())) {
+            await for (final a in client
+                .lookup<IPAddressResourceRecord>(
+                    ResourceRecordQuery.addressIPv4(srv.target))
+                .timeout(const Duration(milliseconds: 1200),
+                    onTimeout: (s) => s.close())) {
+              if (a.address.type == InternetAddressType.IPv4) {
+                final name = await friendly;
+                if (name != null && name.isNotEmpty) {
+                  result.putIfAbsent(a.address.address, () => name);
+                }
+              }
+            }
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+  }
+
+  /// Derives the human name for a Bonjour instance. For googlecast the label
+  /// is a GUID, so the TXT `fn=` field is used instead.
+  Future<String?> _friendlyName(
+      String instance, String type, MDnsClient client) async {
+    final suffix = '.$type';
+    var label = instance.endsWith(suffix)
+        ? instance.substring(0, instance.length - suffix.length)
+        : instance;
+    label = _unescapeDns(label);
+
+    if (type.contains('_raop') && label.contains('@')) {
+      label = label.split('@').last; // "AABBCC@Living Room" → "Living Room"
+    }
+    if (type.contains('_workstation')) {
+      label = label.replaceFirst(RegExp(r'\s*\[[0-9a-fA-F:]+\]\s*$'), '');
+    }
+    if (type.contains('_googlecast')) {
+      try {
+        await for (final txt in client
+            .lookup<TxtResourceRecord>(ResourceRecordQuery.text(instance))
+            .timeout(const Duration(milliseconds: 1000),
+                onTimeout: (s) => s.close())) {
+          final m = RegExp(r'fn=(.+)').firstMatch(txt.text);
+          if (m != null) return m.group(1)!.trim();
+        }
+      } catch (_) {}
+    }
+    return label;
+  }
+
+  /// Decodes DNS-SD escapes (`\032` decimal, `\.`, `\\`) in instance labels.
+  static String _unescapeDns(String s) {
+    final b = StringBuffer();
+    for (var i = 0; i < s.length; i++) {
+      if (s[i] == r'\'[0] && i + 1 < s.length) {
+        final rest = s.substring(i + 1);
+        final dec = RegExp(r'^\d{3}').firstMatch(rest);
+        if (dec != null) {
+          b.writeCharCode(int.parse(dec.group(0)!));
+          i += 3;
+        } else {
+          b.write(s[i + 1]);
+          i += 1;
+        }
+      } else {
+        b.write(s[i]);
+      }
+    }
+    return b.toString();
   }
 
   Future<String?> _reverse(String ip) async {

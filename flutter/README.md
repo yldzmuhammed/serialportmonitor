@@ -4,7 +4,7 @@ Flutter app for macOS, Windows, and Linux: a serial port monitor plus a local-ne
 
 ## IP Scanner
 
-The **Network** tab discovers devices on your local /24 subnet. It ping-sweeps the subnet to populate the ARP cache, reads the ARP table for IP↔MAC pairs, resolves manufacturer from the bundled IEEE OUI database (`assets/oui.csv`), and names hosts via reverse mDNS/Bonjour with a reverse-DNS fallback. The local machine is listed with its own MAC and hostname. Live table shows online/offline dot, name, IP, MAC, manufacturer, and last-seen time, with a filter box and periodic rescan. Passive — only ordinary ICMP/ARP/mDNS traffic.
+The **Network** tab discovers devices on your local /24 subnet. It ping-sweeps the subnet to populate the ARP cache, reads the ARP table for IP↔MAC pairs, resolves manufacturer from the bundled IEEE OUI database (`assets/oui.csv`), and names hosts via forward Bonjour browsing (friendly names like "Byron's MacBook Pro", from `_companion-link`/`_airplay`/`_raop`/`_googlecast`/`_smb`/… instances), falling back to reverse mDNS then reverse DNS. The local machine is listed with its own MAC and hostname. Live table shows online/offline dot, name, IP, MAC, manufacturer, and last-seen time, with a filter box and periodic rescan. Passive — only ordinary ICMP/ARP/mDNS traffic.
 
 Cross-platform: ping/ARP use the right tool per OS — macOS `ping`/`arp`, Linux `ping`/`ip neigh` (falls back to `arp`), Windows `ping`/`arp`; self MAC via `ifconfig`/`ip link`/`getmac`.
 
