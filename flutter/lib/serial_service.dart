@@ -120,8 +120,19 @@ class SerialService {
         _ => SerialPortFlowControl.none,
       };
 
+  // Paths currently open across all sessions (tabs). Opening the same device
+  // twice in-process succeeds at the OS level but yields two readers fighting
+  // over one stream, so block it here.
+  static final Set<String> _openPaths = {};
+
   Future<Map<String, dynamic>> open(SerialConfig cfg,
       {bool byAgent = false}) async {
+    if (_openPaths.contains(cfg.path) && activeConfig?.path != cfg.path) {
+      return {
+        'ok': false,
+        'error': '${cfg.path} is already open in another tab'
+      };
+    }
     await close(silent: true);
 
     final port = SerialPort(cfg.path);
@@ -152,6 +163,7 @@ class SerialService {
 
     _port = port;
     activeConfig = cfg;
+    _openPaths.add(cfg.path);
     rxTotal = 0;
     txTotal = 0;
     _rxAssembly = [];
@@ -196,6 +208,7 @@ class SerialService {
       _port!.dispose();
       _port = null;
     }
+    if (activeConfig != null) _openPaths.remove(activeConfig!.path);
     activeConfig = null;
 
     if (wasOpen && !silent) events.add(SerialEvent('closed'));
