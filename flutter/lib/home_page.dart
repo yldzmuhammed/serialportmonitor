@@ -297,6 +297,7 @@ class _HomePageState extends State<HomePage> {
   AppSettings get settings => widget.settings;
 
   // toolbar
+  String transport = 'serial'; // serial | tcp | udp
   List<PortInfo> ports = [];
   String? selectedPort;
   String baudSel = '115200';
@@ -305,6 +306,8 @@ class _HomePageState extends State<HomePage> {
   String parity = 'none';
   String stopBits = '1';
   String flow = 'none';
+  final hostCtrl = TextEditingController();
+  final netPortCtrl = TextEditingController();
   bool connected = false;
 
   // view bar
@@ -361,6 +364,8 @@ class _HomePageState extends State<HomePage> {
     sendCtrl.dispose();
     sendFocus.dispose();
     customBaudCtrl.dispose();
+    hostCtrl.dispose();
+    netPortCtrl.dispose();
     mcpPortCtrl.dispose();
     super.dispose();
   }
@@ -520,15 +525,15 @@ class _HomePageState extends State<HomePage> {
     switch (event.type) {
       case 'opened':
         final payload = event.payload as Map;
-        final cfg = payload['config'] as SerialConfig;
+        final cfg = payload['config'] as ConnConfig;
         final byAgent = payload['byAgent'] as bool;
         setState(() {
           connected = true;
           _syncControls(cfg);
         });
         _appendSystem(byAgent
-            ? 'Port opened by agent: ${cfg.path} @ ${cfg.baudRate} baud'
-            : 'Opened ${cfg.path} @ ${cfg.baudRate} baud');
+            ? 'Opened by agent: ${cfg.label}'
+            : 'Opened ${cfg.label}');
       case 'closed':
         setState(() => connected = false);
         _appendSystem('Port closed');
@@ -552,7 +557,15 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  void _syncControls(SerialConfig cfg) {
+  void _syncControls(ConnConfig cfg) {
+    if (cfg is NetConfig) {
+      transport = cfg.protocol;
+      hostCtrl.text = cfg.host;
+      netPortCtrl.text = cfg.port.toString();
+      return;
+    }
+    cfg as SerialConfig;
+    transport = 'serial';
     if (!ports.any((p) => p.path == cfg.path)) {
       ports = [...ports, PortInfo(cfg.path, '')];
     }
@@ -590,6 +603,26 @@ class _HomePageState extends State<HomePage> {
       await serial.close();
       return;
     }
+
+    if (transport != 'serial') {
+      final host = hostCtrl.text.trim();
+      final p = int.tryParse(netPortCtrl.text.trim()) ?? 0;
+      if (host.isEmpty) {
+        _appendSystem('Enter a host');
+        return;
+      }
+      if (p < 1 || p > 65535) {
+        _appendSystem('Invalid port number');
+        return;
+      }
+      final result = await serial
+          .openNet(NetConfig(protocol: transport, host: host, port: p));
+      if (result['ok'] != true) {
+        _appendSystem('Failed to open $transport $host:$p: ${result['error']}');
+      }
+      return;
+    }
+
     final port = selectedPort;
     if (port == null) {
       _appendSystem('No port selected');
@@ -818,69 +851,109 @@ class _HomePageState extends State<HomePage> {
         ),
         child: Text(connected ? 'Disconnect' : 'Connect'),
       ),
-      _label('Port'),
+      _label('Type'),
       _dropdown(
-        selectedPort ?? '',
-        ports.isEmpty
-            ? [const DropdownMenuItem(value: '', child: Text('No ports found'))]
-            : [
-                for (final p in ports)
-                  DropdownMenuItem(
-                    value: p.path,
-                    child: Text(
-                      p.description.isEmpty
-                          ? p.path
-                          : '${p.path} — ${p.description}',
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  )
-              ],
-        disabled ? null : (v) => setState(() => selectedPort = v),
-        width: 260,
-      ),
-      IconButton(
-        onPressed: disabled ? null : _refreshPorts,
-        icon: const Icon(Icons.refresh, size: 18, color: kTextDim),
-        tooltip: 'Refresh port list',
-        padding: EdgeInsets.zero,
-        constraints: const BoxConstraints(),
-      ),
-      _label('Baud'),
-      _dropdown(
-        baudSel,
-        [..._items(baudRates.map((b) => b.toString()).toList()),
-         const DropdownMenuItem(value: 'custom', child: Text('Custom…'))],
-        disabled ? null : (v) => setState(() => baudSel = v!),
-      ),
-      if (baudSel == 'custom')
+          transport,
+          _items(['serial', 'tcp', 'udp'],
+              {'serial': 'Serial', 'tcp': 'TCP', 'udp': 'UDP'}),
+          disabled ? null : (v) => setState(() => transport = v!)),
+      if (transport == 'serial') ...[
+        _label('Port'),
+        _dropdown(
+          selectedPort ?? '',
+          ports.isEmpty
+              ? [
+                  const DropdownMenuItem(
+                      value: '', child: Text('No ports found'))
+                ]
+              : [
+                  for (final p in ports)
+                    DropdownMenuItem(
+                      value: p.path,
+                      child: Text(
+                        p.description.isEmpty
+                            ? p.path
+                            : '${p.path} — ${p.description}',
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    )
+                ],
+          disabled ? null : (v) => setState(() => selectedPort = v),
+          width: 260,
+        ),
+        IconButton(
+          onPressed: disabled ? null : _refreshPorts,
+          icon: const Icon(Icons.refresh, size: 18, color: kTextDim),
+          tooltip: 'Refresh port list',
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(),
+        ),
+        _label('Baud'),
+        _dropdown(
+          baudSel,
+          [
+            ..._items(baudRates.map((b) => b.toString()).toList()),
+            const DropdownMenuItem(value: 'custom', child: Text('Custom…'))
+          ],
+          disabled ? null : (v) => setState(() => baudSel = v!),
+        ),
+        if (baudSel == 'custom')
+          SizedBox(
+            width: 90,
+            child: TextField(
+              controller: customBaudCtrl,
+              enabled: !disabled,
+              keyboardType: TextInputType.number,
+              style: const TextStyle(color: kText, fontSize: 13),
+              decoration: _inputDecoration('baud'),
+            ),
+          ),
+        _label('Data'),
+        _dropdown(dataBits, _items(['5', '6', '7', '8']),
+            disabled ? null : (v) => setState(() => dataBits = v!)),
+        _label('Parity'),
+        _dropdown(
+            parity,
+            _items(['none', 'even', 'odd', 'mark', 'space'], {
+              'none': 'None',
+              'even': 'Even',
+              'odd': 'Odd',
+              'mark': 'Mark',
+              'space': 'Space'
+            }),
+            disabled ? null : (v) => setState(() => parity = v!)),
+        _label('Stop'),
+        _dropdown(stopBits, _items(['1', '2']),
+            disabled ? null : (v) => setState(() => stopBits = v!)),
+        _label('Flow'),
+        _dropdown(
+            flow,
+            _items(['none', 'rtscts', 'xonxoff'],
+                {'none': 'None', 'rtscts': 'RTS/CTS', 'xonxoff': 'XON/XOFF'}),
+            disabled ? null : (v) => setState(() => flow = v!)),
+      ] else ...[
+        _label('Host'),
         SizedBox(
-          width: 90,
+          width: 160,
           child: TextField(
-            controller: customBaudCtrl,
+            controller: hostCtrl,
+            enabled: !disabled,
+            style: const TextStyle(color: kText, fontSize: 13),
+            decoration: _inputDecoration('host or IP'),
+          ),
+        ),
+        _label('Port'),
+        SizedBox(
+          width: 80,
+          child: TextField(
+            controller: netPortCtrl,
             enabled: !disabled,
             keyboardType: TextInputType.number,
             style: const TextStyle(color: kText, fontSize: 13),
-            decoration: _inputDecoration('baud'),
+            decoration: _inputDecoration('port'),
           ),
         ),
-      _label('Data'),
-      _dropdown(dataBits, _items(['5', '6', '7', '8']),
-          disabled ? null : (v) => setState(() => dataBits = v!)),
-      _label('Parity'),
-      _dropdown(
-          parity,
-          _items(['none', 'even', 'odd', 'mark', 'space'],
-              {'none': 'None', 'even': 'Even', 'odd': 'Odd', 'mark': 'Mark', 'space': 'Space'}),
-          disabled ? null : (v) => setState(() => parity = v!)),
-      _label('Stop'),
-      _dropdown(stopBits, _items(['1', '2']),
-          disabled ? null : (v) => setState(() => stopBits = v!)),
-      _label('Flow'),
-      _dropdown(
-          flow,
-          _items(['none', 'rtscts', 'xonxoff'],
-              {'none': 'None', 'rtscts': 'RTS/CTS', 'xonxoff': 'XON/XOFF'}),
-          disabled ? null : (v) => setState(() => flow = v!)),
+      ],
     ]);
   }
 
@@ -1150,10 +1223,17 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _statusBar() {
-    final statusText = connected && serial.activeConfig != null
-        ? 'Connected — ${serial.activeConfig!.path} @ ${serial.activeConfig!.baudRate} baud, '
-            '${serial.activeConfig!.dataBits}${serial.activeConfig!.parity[0].toUpperCase()}${serial.activeConfig!.stopBits}'
-        : 'Disconnected';
+    final cfg = serial.activeConfig;
+    String statusText;
+    if (connected && cfg is SerialConfig) {
+      statusText = 'Connected — ${cfg.path} @ ${cfg.baudRate} baud, '
+          '${cfg.dataBits}${cfg.parity[0].toUpperCase()}${cfg.stopBits}';
+    } else if (connected && cfg is NetConfig) {
+      statusText =
+          'Connected — ${cfg.protocol.toUpperCase()} ${cfg.host}:${cfg.port}';
+    } else {
+      statusText = 'Disconnected';
+    }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
       decoration: const BoxDecoration(

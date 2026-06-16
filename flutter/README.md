@@ -10,7 +10,9 @@ Cross-platform: ping/ARP use the right tool per OS — macOS `ping`/`arp`, Linux
 
 ## Serial Monitor
 
-**Tabs:** open several ports at once, one per tab (a port can only be opened once). `+` adds a tab, the `×` closes one. Each tab is an independent session with its own capture buffer and settings.
+**Tabs:** open several ports at once, one per tab (a target can only be opened once). `+` adds a tab, the `×` closes one. Each tab is an independent session with its own capture buffer and settings.
+
+**Transports:** each tab connects to a **Serial** device, a **TCP** socket, or a **UDP** endpoint — pick via the Type selector. TCP/UDP take a host and port; received bytes flow into the same capture buffer, line assembly, views, History, and MCP tools as serial data. MCP exposes `open_socket` (protocol/host/port); connections are labelled `tcp host:port` / `udp host:port` for the `port` targeting argument.
 
 Feature parity with the Electron app:
 

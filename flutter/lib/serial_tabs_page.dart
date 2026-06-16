@@ -98,8 +98,9 @@ class _SerialTabsPageState extends State<SerialTabsPage> {
   String _titleFor(_Session s, int i) {
     final cfg = s.serial.activeConfig;
     if (cfg != null) {
-      final base = cfg.path.split('/').last;
-      return base.isEmpty ? cfg.path : base;
+      // serial → device name; socket → "tcp host:port"
+      final base = cfg.label.split('/').last;
+      return base.isEmpty ? cfg.label : base;
     }
     return 'Port ${i + 1}';
   }
@@ -133,19 +134,26 @@ class _SerialTabsPageState extends State<SerialTabsPage> {
         border: Border(bottom: BorderSide(color: kBorder)),
       ),
       child: Row(children: [
-        Expanded(
-          child: ListView.builder(
+        // tabs take only the width they need…
+        Flexible(
+          child: SingleChildScrollView(
             scrollDirection: Axis.horizontal,
-            itemCount: _sessions.length,
-            itemBuilder: (c, i) => _tab(i),
+            child: Row(
+              children: [for (var i = 0; i < _sessions.length; i++) _tab(i)],
+            ),
           ),
         ),
-        IconButton(
-          onPressed: _addSession,
-          icon: const Icon(Icons.add, size: 18, color: kTextDim),
-          tooltip: 'New port tab',
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(minWidth: 40, minHeight: 36),
+        // …and the "+" fills the remaining space to the right edge.
+        Expanded(
+          child: InkWell(
+            onTap: _addSession,
+            child: Container(
+              height: 36,
+              alignment: Alignment.centerLeft,
+              padding: const EdgeInsets.only(left: 10),
+              child: const Icon(Icons.add, size: 18, color: kTextDim),
+            ),
+          ),
         ),
       ]),
     );

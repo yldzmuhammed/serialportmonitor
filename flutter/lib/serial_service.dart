@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_libserialport/flutter_libserialport.dart';
@@ -14,7 +15,14 @@ class PortInfo {
   Map<String, dynamic> toJson() => {'path': path, 'description': description};
 }
 
-class SerialConfig {
+/// A connection target — serial device, or TCP/UDP network endpoint.
+sealed class ConnConfig {
+  String get kind; // serial | tcp | udp
+  String get label; // identifier shown in UI and used by MCP `port` targeting
+  Map<String, dynamic> toJson();
+}
+
+class SerialConfig extends ConnConfig {
   final String path;
   final int baudRate;
   final int dataBits;
@@ -22,7 +30,7 @@ class SerialConfig {
   final int stopBits; // 1 | 2 (libserialport has no 1.5)
   final String flowControl; // none | rtscts | xonxoff
 
-  const SerialConfig({
+  SerialConfig({
     required this.path,
     this.baudRate = 115200,
     this.dataBits = 8,
@@ -31,6 +39,12 @@ class SerialConfig {
     this.flowControl = 'none',
   });
 
+  @override
+  String get kind => 'serial';
+  @override
+  String get label => path;
+
+  @override
   Map<String, dynamic> toJson() => {
         'path': path,
         'baudRate': baudRate,
@@ -39,6 +53,23 @@ class SerialConfig {
         'stopBits': stopBits,
         'flowControl': flowControl,
       };
+}
+
+class NetConfig extends ConnConfig {
+  final String protocol; // tcp | udp
+  final String host;
+  final int port;
+
+  NetConfig({required this.protocol, required this.host, required this.port});
+
+  @override
+  String get kind => protocol;
+  @override
+  String get label => '$protocol $host:$port';
+
+  @override
+  Map<String, dynamic> toJson() =>
+      {'protocol': protocol, 'host': host, 'port': port};
 }
 
 class CaptureEntry {
@@ -68,11 +99,23 @@ class SerialService {
   final AppSettings settings;
   SerialService(this.settings);
 
+  // transports (only one live at a time)
   SerialPort? _port;
   Timer? _readTimer;
-  SerialConfig? activeConfig;
+  Socket? _tcp;
+  RawDatagramSocket? _udp;
+  InternetAddress? _udpRemote;
+  int _udpPort = 0;
+  StreamSubscription? _netSub;
 
-  bool get connected => _port?.isOpen ?? false;
+  ConnConfig? activeConfig;
+
+  bool get connected =>
+      (_port?.isOpen ?? false) || _tcp != null || _udp != null;
+
+  /// Serial path of the active connection, or null when none/network.
+  String? get serialPath =>
+      activeConfig is SerialConfig ? (activeConfig as SerialConfig).path : null;
 
   int rxTotal = 0;
   int txTotal = 0;
@@ -120,14 +163,14 @@ class SerialService {
         _ => SerialPortFlowControl.none,
       };
 
-  // Paths currently open across all sessions (tabs). Opening the same device
-  // twice in-process succeeds at the OS level but yields two readers fighting
-  // over one stream, so block it here.
+  // Connection labels open across all tabs. Opening the same target twice
+  // in-process is blocked (two serial readers fight over one stream; duplicate
+  // sockets are pointless).
   static final Set<String> _openPaths = {};
 
   Future<Map<String, dynamic>> open(SerialConfig cfg,
       {bool byAgent = false}) async {
-    if (_openPaths.contains(cfg.path) && activeConfig?.path != cfg.path) {
+    if (_openPaths.contains(cfg.label) && activeConfig?.label != cfg.label) {
       return {
         'ok': false,
         'error': '${cfg.path} is already open in another tab'
@@ -163,7 +206,7 @@ class SerialService {
 
     _port = port;
     activeConfig = cfg;
-    _openPaths.add(cfg.path);
+    _openPaths.add(cfg.label);
     rxTotal = 0;
     txTotal = 0;
     _rxAssembly = [];
@@ -181,9 +224,7 @@ class SerialService {
         if (available <= 0) return;
         final data = p.read(available.clamp(1, 16384), timeout: 100);
         if (data.isEmpty) return;
-        rxTotal += data.length;
-        _captureRx(data);
-        rxChunks.add(data);
+        _ingest(data);
       } catch (e) {
         events.add(SerialEvent('error', e.toString()));
         close(); // device likely unplugged
@@ -195,12 +236,78 @@ class SerialService {
     return {'ok': true, if (configWarning != null) 'warning': configWarning};
   }
 
+  /// Opens a TCP or UDP endpoint. TCP connects to host:port; UDP binds an
+  /// ephemeral local socket and sends/receives with host:port as the peer.
+  Future<Map<String, dynamic>> openNet(NetConfig cfg,
+      {bool byAgent = false}) async {
+    if (_openPaths.contains(cfg.label) && activeConfig?.label != cfg.label) {
+      return {'ok': false, 'error': '${cfg.label} is already open in another tab'};
+    }
+    await close(silent: true);
+
+    try {
+      if (cfg.protocol == 'tcp') {
+        final s = await Socket.connect(cfg.host, cfg.port,
+            timeout: const Duration(seconds: 5));
+        _tcp = s;
+        _netSub = s.listen(
+          (d) => _ingest(d),
+          onError: (Object e) {
+            events.add(SerialEvent('error', e.toString()));
+            close();
+          },
+          onDone: () => close(),
+          cancelOnError: true,
+        );
+      } else {
+        final list = await InternetAddress.lookup(cfg.host);
+        if (list.isEmpty) {
+          return {'ok': false, 'error': 'Cannot resolve host ${cfg.host}'};
+        }
+        final addr = list.firstWhere(
+            (a) => a.type == InternetAddressType.IPv4,
+            orElse: () => list.first);
+        final s = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
+        _udp = s;
+        _udpRemote = addr;
+        _udpPort = cfg.port;
+        _netSub = s.listen((event) {
+          if (event == RawSocketEvent.read) {
+            final dg = s.receive();
+            if (dg != null) _ingest(dg.data);
+          }
+        });
+      }
+    } catch (e) {
+      await close(silent: true);
+      return {'ok': false, 'error': e.toString()};
+    }
+
+    activeConfig = cfg;
+    _openPaths.add(cfg.label);
+    rxTotal = 0;
+    txTotal = 0;
+    _rxAssembly = [];
+
+    events.add(SerialEvent('opened', {'config': cfg, 'byAgent': byAgent}));
+    return {'ok': true};
+  }
+
+  /// Feeds incoming bytes from any transport into the capture pipeline + UI.
+  void _ingest(Uint8List data) {
+    rxTotal += data.length;
+    _captureRx(data);
+    rxChunks.add(data);
+  }
+
   Future<Map<String, dynamic>> close({bool silent = false}) async {
     _flushRxAssembly();
     final wasOpen = connected;
 
     _readTimer?.cancel();
     _readTimer = null;
+    await _netSub?.cancel();
+    _netSub = null;
     if (_port != null) {
       try {
         _port!.close();
@@ -208,7 +315,15 @@ class SerialService {
       _port!.dispose();
       _port = null;
     }
-    if (activeConfig != null) _openPaths.remove(activeConfig!.path);
+    try {
+      _tcp?.destroy();
+    } catch (_) {}
+    _tcp = null;
+    _udp?.close();
+    _udp = null;
+    _udpRemote = null;
+
+    if (activeConfig != null) _openPaths.remove(activeConfig!.label);
     activeConfig = null;
 
     if (wasOpen && !silent) events.add(SerialEvent('closed'));
@@ -242,7 +357,15 @@ class SerialService {
 
     int written;
     try {
-      written = _port!.write(buf);
+      if (_tcp != null) {
+        _tcp!.add(buf);
+        await _tcp!.flush();
+        written = buf.length;
+      } else if (_udp != null) {
+        written = _udp!.send(buf, _udpRemote!, _udpPort);
+      } else {
+        written = _port!.write(buf);
+      }
     } catch (e) {
       return {'ok': false, 'error': e.toString()};
     }
@@ -347,16 +470,9 @@ class SerialService {
 
   Map<String, dynamic> mcpStatus() => {
         'connected': connected,
-        'port': activeConfig?.path,
-        'settings': activeConfig == null
-            ? null
-            : {
-                'baudRate': activeConfig!.baudRate,
-                'dataBits': activeConfig!.dataBits,
-                'parity': activeConfig!.parity,
-                'stopBits': activeConfig!.stopBits,
-                'flowControl': activeConfig!.flowControl,
-              },
+        'kind': activeConfig?.kind,
+        'port': activeConfig?.label,
+        'settings': activeConfig?.toJson(),
         'rxBytes': rxTotal,
         'txBytes': txTotal,
         'buffer': {

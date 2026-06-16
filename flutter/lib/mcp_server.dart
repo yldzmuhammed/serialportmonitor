@@ -27,7 +27,7 @@ class McpServer {
     final port = args['port'] as String?;
     if (port != null && port.isNotEmpty) {
       for (final s in sessions) {
-        if (s.activeConfig?.path == port) return (s: s, err: null);
+        if (s.activeConfig?.label == port) return (s: s, err: null);
       }
       return (
         s: null,
@@ -178,10 +178,10 @@ class McpServer {
         out = (active ?? sessions.firstOrNull)?.listPorts().map((p) => p.toJson()).toList() ?? [];
       case 'get_status':
         out = {
-          'active_port': active?.activeConfig?.path,
+          'active_port': active?.activeConfig?.label,
           'open_ports': [
             for (final s in sessions)
-              if (s.connected) s.activeConfig!.path
+              if (s.connected) s.activeConfig!.label
           ],
           'sessions': [
             for (var i = 0; i < sessions.length; i++)
@@ -203,7 +203,7 @@ class McpServer {
         if (path == null || path.isEmpty) {
           return _toolError('open_port requires a "path" argument');
         }
-        if (sessions.any((s) => s.activeConfig?.path == path)) {
+        if (sessions.any((s) => s.activeConfig?.label == path)) {
           return _toolError(
               'Port "$path" is already open in another tab. A port can only be opened once.');
         }
@@ -220,6 +220,29 @@ class McpServer {
         out = res['ok'] == true
             ? {'ok': true, 'opened': cfg.toJson(), 'tab': sessions.indexOf(active!) + 1}
             : res;
+      case 'open_socket':
+        final proto = (args['protocol'] as String? ?? 'tcp').toLowerCase();
+        if (proto != 'tcp' && proto != 'udp') {
+          return _toolError('protocol must be "tcp" or "udp"');
+        }
+        final host = args['host'] as String?;
+        final sport = (args['port'] as num?)?.toInt();
+        if (host == null || host.isEmpty || sport == null) {
+          return _toolError('open_socket requires "host" and "port"');
+        }
+        final ncfg = NetConfig(protocol: proto, host: host, port: sport);
+        if (sessions.any((s) => s.activeConfig?.label == ncfg.label)) {
+          return _toolError('${ncfg.label} is already open in another tab.');
+        }
+        if (active == null) return _toolError('No serial session.');
+        final nres = await active!.openNet(ncfg, byAgent: true);
+        out = nres['ok'] == true
+            ? {
+                'ok': true,
+                'opened': ncfg.toJson(),
+                'tab': sessions.indexOf(active!) + 1
+              }
+            : nres;
       case 'close_port':
         out = await target!.close();
       case 'send_data':
@@ -348,9 +371,33 @@ class McpServer {
       },
     },
     {
+      'name': 'open_socket',
+      'description':
+          'Open a TCP or UDP network connection in the active tab. TCP connects to host:port; UDP binds a local socket and exchanges datagrams with host:port. Received bytes flow into the same capture buffer as serial data. The connection is labelled "<proto> <host>:<port>" — use that as the "port" argument to other tools.',
+      'inputSchema': {
+        'type': 'object',
+        'properties': {
+          'protocol': {
+            'type': 'string',
+            'enum': ['tcp', 'udp'],
+            'description': 'Transport (default tcp)',
+          },
+          'host': {
+            'type': 'string',
+            'description': 'Hostname or IP address',
+          },
+          'port': {
+            'type': 'integer',
+            'description': 'TCP/UDP port number',
+          },
+        },
+        'required': ['host', 'port'],
+      },
+    },
+    {
       'name': 'close_port',
       'description':
-          'Close an open serial port. The app UI updates to show the disconnection.',
+          'Close an open connection (serial or socket). The app UI updates to show the disconnection.',
       'inputSchema': {
         'type': 'object',
         'properties': {
