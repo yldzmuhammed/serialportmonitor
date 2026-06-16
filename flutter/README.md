@@ -10,6 +10,8 @@ Cross-platform: ping/ARP use the right tool per OS — macOS `ping`/`arp`, Linux
 
 ## Serial Monitor
 
+**Tabs:** open several ports at once, one per tab (a port can only be opened once). `+` adds a tab, the `×` closes one. Each tab is an independent session with its own capture buffer and settings.
+
 Feature parity with the Electron app:
 
 - Port discovery with descriptions, full serial config (baud incl. custom, data bits, parity, stop bits, flow control)

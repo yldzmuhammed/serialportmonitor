@@ -8,8 +8,36 @@ import 'serial_service.dart';
 /// observe through the capture buffer and act through the same write path
 /// the UI uses, so nothing they do can disrupt the data stream.
 class McpServer {
-  final SerialService serial;
-  McpServer(this.serial);
+  /// All open serial sessions (one per tab) and which is active. The UI keeps
+  /// these in sync. Tools act on the session named by the `port` argument, or
+  /// the active tab when `port` is omitted.
+  List<SerialService> sessions = [];
+  SerialService? active;
+  McpServer([SerialService? initial]) {
+    if (initial != null) {
+      sessions = [initial];
+      active = initial;
+    }
+  }
+
+  /// Resolves the target session: by open-port path if `port` given, else the
+  /// active tab. Returns null with an error map when it can't.
+  ({SerialService? s, Map<String, dynamic>? err}) _target(
+      Map<String, dynamic> args) {
+    final port = args['port'] as String?;
+    if (port != null && port.isNotEmpty) {
+      for (final s in sessions) {
+        if (s.activeConfig?.path == port) return (s: s, err: null);
+      }
+      return (
+        s: null,
+        err: _toolError(
+            'No open port "$port". Call get_status to list open ports.')
+      );
+    }
+    if (active == null) return (s: null, err: _toolError('No serial session.'));
+    return (s: active, err: null);
+  }
 
   HttpServer? _http;
   String? url;
@@ -133,14 +161,36 @@ class McpServer {
     final name = params['name'] as String?;
     final args = params['arguments'] as Map<String, dynamic>? ?? {};
 
+    // tools that target a specific session
+    SerialService? target;
+    if (name == 'get_status' ||
+        name == 'read_data' ||
+        name == 'close_port' ||
+        name == 'send_data') {
+      final r = _target(args);
+      if (r.s == null) return r.err!;
+      target = r.s;
+    }
+
     dynamic out;
     switch (name) {
       case 'list_ports':
-        out = serial.listPorts().map((p) => p.toJson()).toList();
+        out = (active ?? sessions.firstOrNull)?.listPorts().map((p) => p.toJson()).toList() ?? [];
       case 'get_status':
-        out = serial.mcpStatus();
+        out = {
+          'active_port': active?.activeConfig?.path,
+          'open_ports': [
+            for (final s in sessions)
+              if (s.connected) s.activeConfig!.path
+          ],
+          'sessions': [
+            for (var i = 0; i < sessions.length; i++)
+              {'tab': i + 1, ...sessions[i].mcpStatus()}
+          ],
+          ...target!.mcpStatus(),
+        };
       case 'read_data':
-        out = serial.readData(
+        out = target!.readData(
           sinceSeq: (args['since_seq'] as num?)?.toInt() ?? 0,
           maxEntries: ((args['max_entries'] as num?)?.toInt() ?? 200)
               .clamp(1, 1000),
@@ -153,6 +203,11 @@ class McpServer {
         if (path == null || path.isEmpty) {
           return _toolError('open_port requires a "path" argument');
         }
+        if (sessions.any((s) => s.activeConfig?.path == path)) {
+          return _toolError(
+              'Port "$path" is already open in another tab. A port can only be opened once.');
+        }
+        if (active == null) return _toolError('No serial session.');
         final cfg = SerialConfig(
           path: path,
           baudRate: (args['baud_rate'] as num?)?.toInt() ?? 115200,
@@ -161,12 +216,14 @@ class McpServer {
           stopBits: (args['stop_bits'] as num?)?.toInt() ?? 1,
           flowControl: args['flow_control'] as String? ?? 'none',
         );
-        final res = await serial.open(cfg, byAgent: true);
-        out = res['ok'] == true ? {'ok': true, 'opened': cfg.toJson()} : res;
+        final res = await active!.open(cfg, byAgent: true);
+        out = res['ok'] == true
+            ? {'ok': true, 'opened': cfg.toJson(), 'tab': sessions.indexOf(active!) + 1}
+            : res;
       case 'close_port':
-        out = await serial.close();
+        out = await target!.close();
       case 'send_data':
-        out = await serial.write(
+        out = await target!.write(
           data: args['data'] as String? ?? '',
           hex: args['hex'] == true,
           lineEnding:
@@ -203,8 +260,17 @@ class McpServer {
     {
       'name': 'get_status',
       'description':
-          'Get the monitor state: whether a port is open, its settings, byte totals, and the capture buffer sequence range.',
-      'inputSchema': {'type': 'object', 'properties': <String, dynamic>{}},
+          'Get the monitor state. The app can hold several ports open at once, one per tab. Returns the active tab\'s status plus "open_ports" (list of open port paths), "active_port", and a "sessions" array (one per tab with its port, settings, byte totals, and buffer range). Use the port paths here as the "port" argument to other tools.',
+      'inputSchema': {
+        'type': 'object',
+        'properties': {
+          'port': {
+            'type': 'string',
+            'description':
+                'Report this open port\'s status as the top-level fields (default: active tab). Does not affect the sessions array.',
+          },
+        },
+      },
     },
     {
       'name': 'read_data',
@@ -235,13 +301,18 @@ class McpServer {
             'type': 'boolean',
             'description': 'Treat query as a regular expression (default false)',
           },
+          'port': {
+            'type': 'string',
+            'description':
+                'Read from this open port (default: active tab). Use a path from get_status open_ports.',
+          },
         },
       },
     },
     {
       'name': 'open_port',
       'description':
-          'Open a serial port in the monitor app. The app UI updates to show the connection. Any previously open port is closed first.',
+          'Open a serial port in the active tab. The app UI updates to show the connection. If that tab already has a port open it is closed first. Fails if the requested port is already open in another tab (a port can only be opened once).',
       'inputSchema': {
         'type': 'object',
         'properties': {
@@ -279,8 +350,17 @@ class McpServer {
     {
       'name': 'close_port',
       'description':
-          'Close the currently open serial port. The app UI updates to show the disconnection.',
-      'inputSchema': {'type': 'object', 'properties': <String, dynamic>{}},
+          'Close an open serial port. The app UI updates to show the disconnection.',
+      'inputSchema': {
+        'type': 'object',
+        'properties': {
+          'port': {
+            'type': 'string',
+            'description':
+                'Which open port to close (default: active tab). Use a path from get_status open_ports.',
+          },
+        },
+      },
     },
     {
       'name': 'send_data',
@@ -303,6 +383,11 @@ class McpServer {
             'enum': ['none', 'lf', 'cr', 'crlf'],
             'description':
                 'Line ending appended to text sends (default none; ignored for hex)',
+          },
+          'port': {
+            'type': 'string',
+            'description':
+                'Send out this open port (default: active tab). Use a path from get_status open_ports.',
           },
         },
         'required': ['data'],

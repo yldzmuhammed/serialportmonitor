@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 
-import 'home_page.dart' show HomePage, kBg, kPanel, kBorder, kText, kTextDim, kAccent;
+import 'home_page.dart' show kBg, kPanel, kBorder, kText, kTextDim, kAccent;
 import 'mcp_server.dart';
 import 'network_page.dart';
 import 'network_scanner.dart';
 import 'serial_service.dart';
+import 'serial_tabs_page.dart';
 import 'settings_store.dart';
 
 /// Top-level shell: switches between the Serial Monitor and the IP Scanner.
@@ -41,10 +42,10 @@ class _RootPageState extends State<RootPage> {
           child: IndexedStack(
             index: index,
             children: [
-              HomePage(
-                  serial: widget.serial,
+              SerialTabsPage(
+                  settings: widget.settings,
                   mcp: widget.mcp,
-                  settings: widget.settings),
+                  boot: widget.serial),
               NetworkPage(scanner: widget.scanner),
             ],
           ),

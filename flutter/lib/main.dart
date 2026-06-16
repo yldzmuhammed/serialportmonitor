@@ -11,7 +11,7 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   final settings = await AppSettings.load();
-  final serial = SerialService(settings);
+  final serial = SerialService(settings); // first tab / MCP boot target
   final mcp = McpServer(serial);
   final scanner = NetworkScanner();
   if (settings.mcpEnabled) {
