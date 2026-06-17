@@ -207,7 +207,8 @@ class _HistoryDialogState extends State<HistoryDialog> {
                     ? const Center(
                         child: Text('No captured data',
                             style: TextStyle(color: kTextDim)))
-                    : ListView.builder(
+                    : SelectionArea(
+                        child: ListView.builder(
                         itemCount: entries.length,
                         itemBuilder: (context, i) {
                           final e = entries[i];
@@ -232,7 +233,7 @@ class _HistoryDialogState extends State<HistoryDialog> {
                                     color: isTx ? kTxColor : kText)),
                           ]));
                         },
-                      ),
+                      )),
               ),
             ),
             Padding(
@@ -1055,6 +1056,10 @@ class _HomePageState extends State<HomePage> {
             style: _monoStyle.copyWith(fontSize: 11, color: kTextDim)),
       ),
       OutlinedButton(
+          onPressed: lines.isEmpty ? null : _copyAll,
+          style: _outlinedStyle(),
+          child: const Text('Copy')),
+      OutlinedButton(
           onPressed: _saveLog,
           style: _outlinedStyle(),
           child: const Text('Save Log')),
@@ -1157,17 +1162,16 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _output() {
-    // No SelectionArea: it tracks every Text in the list, and with lines
-    // being added/removed hundreds of times per second the stale selectable
-    // references crash the engine's text layout. Use Save Log to copy data.
     final list = ListView.builder(
       controller: scrollCtrl,
       itemCount: lines.length,
       itemBuilder: (context, i) => _lineWidget(lines[i]),
     );
 
-    // Terminal mode: the output area takes focus and forwards keystrokes
-    // straight to the connection, like a serial console.
+    // Terminal mode → output takes focus and forwards keystrokes to the port.
+    // Otherwise wrap in SelectionArea so you can drag-select text and Cmd-C.
+    // (The old text-layout crashes were the libserialport heap double-free,
+    // since fixed — not SelectionArea.)
     final body = terminalMode
         ? GestureDetector(
             onTap: () => outputFocus.requestFocus(),
@@ -1177,7 +1181,7 @@ class _HomePageState extends State<HomePage> {
               child: list,
             ),
           )
-        : list;
+        : SelectionArea(child: list);
 
     return Container(
       color: kBg,
@@ -1215,6 +1219,18 @@ class _HomePageState extends State<HomePage> {
     return KeyEventResult.handled;
   }
 
+  String _lineText(OutputLine l) {
+    final ts = l.ts != null ? '${l.ts}  ' : '';
+    final hex = l.hexPart != null ? '  [${l.hexPart}]' : '';
+    return '$ts${l.dir} ${l.payload}$hex';
+  }
+
+  Future<void> _copyAll() async {
+    final text = lines.map(_lineText).join('\n');
+    await Clipboard.setData(ClipboardData(text: text));
+    _appendSystem('Copied ${lines.length} lines to clipboard');
+  }
+
   Widget _lineWidget(OutputLine line) {
     final dirColor = switch (line.type) {
       'tx' => kTxColor,
@@ -1228,7 +1244,15 @@ class _HomePageState extends State<HomePage> {
       'sys' => kYellow,
       _ => kText,
     };
-    return Text.rich(TextSpan(children: [
+    // Right-click a line to copy just that line; drag-select across lines for
+    // partial copies (Cmd-C), or the Copy button for everything.
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onSecondaryTap: () {
+        Clipboard.setData(ClipboardData(text: line.payload));
+        _appendSystem('Copied line to clipboard');
+      },
+      child: Text.rich(TextSpan(children: [
       if (line.ts != null)
         TextSpan(
             text: '${line.ts}  ',
@@ -1243,11 +1267,12 @@ class _HomePageState extends State<HomePage> {
               color: payloadColor,
               fontStyle:
                   line.type == 'sys' ? FontStyle.italic : FontStyle.normal)),
-      if (line.hexPart != null)
-        TextSpan(
-            text: '  [${line.hexPart}]',
-            style: _monoStyle.copyWith(color: kTextDim)),
-    ]));
+        if (line.hexPart != null)
+          TextSpan(
+              text: '  [${line.hexPart}]',
+              style: _monoStyle.copyWith(color: kTextDim)),
+      ])),
+    );
   }
 
   Widget _sendBar() {
