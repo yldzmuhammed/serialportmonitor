@@ -323,7 +323,6 @@ class _HomePageState extends State<HomePage> {
   // output
   final List<OutputLine> lines = [];
   OutputLine? _openLine;
-  String _rxLineBuffer = '';
   String _heldCR = '';
   final scrollCtrl = ScrollController();
 
@@ -479,9 +478,9 @@ class _HomePageState extends State<HomePage> {
         return;
       }
 
-      // ASCII mode: split into lines, keep the partial line open so chunks
-      // join naturally. A CRLF pair can be split across two chunks — hold a
-      // trailing \r back until the next chunk shows whether it pairs with \n.
+      // ASCII mode: stream chars into the current line, honoring backspace.
+      // A CRLF pair can split across chunks — hold a trailing \r until the
+      // next chunk shows whether it pairs with \n.
       var chunk = text;
       if (rxLineEnding == 'auto' || rxLineEnding == 'crlf') {
         chunk = _heldCR + chunk;
@@ -493,35 +492,54 @@ class _HomePageState extends State<HomePage> {
       }
       if (chunk.isEmpty) return;
 
-      _rxLineBuffer += chunk;
-      final splitter = switch (rxLineEnding) {
-        'lf' => RegExp(r'\n'),
-        'cr' => RegExp(r'\r'),
-        'crlf' => RegExp(r'\r\n'),
-        _ => RegExp(r'\r\n|\n|\r'),
-      };
-      final parts = _rxLineBuffer.split(splitter);
-      _rxLineBuffer = parts.removeLast();
-
-      for (final part in parts) {
-        if (_openLine != null) {
-          _openLine!.payload += _printable(part);
-          _openLine = null;
-        } else {
-          _appendLine(OutputLine(
-              'rx', timestamps ? _ts() : null, 'RX<', _printable(part)));
-        }
+      OutputLine ensureLine() {
+        _openLine ??= () {
+          final l = OutputLine('rx', timestamps ? _ts() : null, 'RX<', '');
+          _appendLine(l);
+          return l;
+        }();
+        return _openLine!;
       }
 
-      if (_rxLineBuffer.isNotEmpty) {
-        if (_openLine != null) {
-          _openLine!.payload += _printable(_rxLineBuffer);
-        } else {
-          _openLine = OutputLine(
-              'rx', timestamps ? _ts() : null, 'RX<', _printable(_rxLineBuffer));
-          _appendLine(_openLine!);
+      for (var i = 0; i < chunk.length; i++) {
+        final c = chunk[i];
+        final code = chunk.codeUnitAt(i);
+
+        // line terminator per selected ending
+        var isEnd = false;
+        switch (rxLineEnding) {
+          case 'lf':
+            isEnd = c == '\n';
+          case 'cr':
+            isEnd = c == '\r';
+          case 'crlf':
+            if (c == '\r' && i + 1 < chunk.length && chunk[i + 1] == '\n') {
+              isEnd = true;
+              i++;
+            }
+          default: // auto: CR, LF, or CRLF
+            if (c == '\n') {
+              isEnd = true;
+            } else if (c == '\r') {
+              if (i + 1 < chunk.length && chunk[i + 1] == '\n') i++;
+              isEnd = true;
+            }
         }
-        _rxLineBuffer = '';
+        if (isEnd) {
+          _openLine = null;
+          continue;
+        }
+
+        // backspace / DEL erases the previous char, like a terminal
+        if (code == 0x08 || code == 0x7f) {
+          final l = _openLine;
+          if (l != null && l.payload.isNotEmpty) {
+            l.payload = l.payload.substring(0, l.payload.length - 1);
+          }
+          continue;
+        }
+
+        ensureLine().payload += _printable(c);
       }
     }
   }
@@ -988,7 +1006,6 @@ class _HomePageState extends State<HomePage> {
       onTap: () => setState(() {
         viewMode = mode;
         _openLine = null;
-        _rxLineBuffer = '';
         _heldCR = '';
       }),
       child: Container(
@@ -1024,7 +1041,6 @@ class _HomePageState extends State<HomePage> {
         setState(() {
           rxLineEnding = v!;
           _openLine = null;
-          _rxLineBuffer = '';
           _heldCR = '';
         });
         settings.rxLineEnding = v!;
@@ -1068,7 +1084,6 @@ class _HomePageState extends State<HomePage> {
           // display only — captured history stays available under History
           lines.clear();
           _openLine = null;
-          _rxLineBuffer = '';
           _heldCR = '';
         }),
         style: _outlinedStyle(),
