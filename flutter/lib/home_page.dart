@@ -354,8 +354,6 @@ class _HomePageState extends State<HomePage> {
 
     _chunkSub = serial.rxChunks.stream.listen(_onChunk);
     _eventSub = serial.events.stream.listen(_onEvent);
-    _uiFlushTimer =
-        Timer.periodic(const Duration(milliseconds: 33), (_) => _flushPending());
     outputFocus.addListener(() {
       if (mounted) setState(() {}); // repaint terminal focus border
     });
@@ -363,7 +361,6 @@ class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
-    _uiFlushTimer?.cancel();
     _portRefreshTimer?.cancel();
     _chunkSub?.cancel();
     _eventSub?.cancel();
@@ -438,29 +435,16 @@ class _HomePageState extends State<HomePage> {
 
   // ---------- RX rendering ----------
 
-  // Serial data can arrive as hundreds of tiny chunks per second; rendering
-  // each one individually hammers the engine's text layout. Batch them and
-  // paint at most ~30 times per second.
-  final List<Uint8List> _pendingChunks = [];
-  Timer? _uiFlushTimer;
-
+  // Update the view directly on each RX event, like a C# DataReceived handler
+  // appending to a textbox. Flutter coalesces multiple setState calls within a
+  // frame into a single rebuild, so this stays smooth even at high data rates.
   void _onChunk(Uint8List bytes) {
-    // Just buffer; a periodic timer drains at ~30 fps. A periodic timer (vs a
-    // self-rescheduling one-shot) can never get stranded and freeze the view.
-    _pendingChunks.add(bytes);
-  }
-
-  void _flushPending() {
-    if (!mounted || _pendingChunks.isEmpty) return;
-    final chunks = List.of(_pendingChunks);
-    _pendingChunks.clear();
+    if (!mounted) return;
     setState(() {
-      for (final c in chunks) {
-        try {
-          _renderChunk(c);
-        } catch (_) {
-          // one malformed chunk must never wedge the render loop
-        }
+      try {
+        _renderChunk(bytes);
+      } catch (_) {
+        // a malformed chunk must never break rendering
       }
     });
     _scrollAfterFrame();
