@@ -354,6 +354,8 @@ class _HomePageState extends State<HomePage> {
 
     _chunkSub = serial.rxChunks.stream.listen(_onChunk);
     _eventSub = serial.events.stream.listen(_onEvent);
+    _uiFlushTimer =
+        Timer.periodic(const Duration(milliseconds: 33), (_) => _flushPending());
     outputFocus.addListener(() {
       if (mounted) setState(() {}); // repaint terminal focus border
     });
@@ -443,19 +445,25 @@ class _HomePageState extends State<HomePage> {
   Timer? _uiFlushTimer;
 
   void _onChunk(Uint8List bytes) {
+    // Just buffer; a periodic timer drains at ~30 fps. A periodic timer (vs a
+    // self-rescheduling one-shot) can never get stranded and freeze the view.
     _pendingChunks.add(bytes);
-    _uiFlushTimer ??= Timer(const Duration(milliseconds: 33), () {
-      _uiFlushTimer = null;
-      if (!mounted || _pendingChunks.isEmpty) return;
-      final chunks = List.of(_pendingChunks);
-      _pendingChunks.clear();
-      setState(() {
-        for (final c in chunks) {
+  }
+
+  void _flushPending() {
+    if (!mounted || _pendingChunks.isEmpty) return;
+    final chunks = List.of(_pendingChunks);
+    _pendingChunks.clear();
+    setState(() {
+      for (final c in chunks) {
+        try {
           _renderChunk(c);
+        } catch (_) {
+          // one malformed chunk must never wedge the render loop
         }
-      });
-      _scrollAfterFrame();
+      }
     });
+    _scrollAfterFrame();
   }
 
   void _renderChunk(Uint8List bytes) {
