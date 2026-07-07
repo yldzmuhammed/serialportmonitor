@@ -309,6 +309,8 @@ class _HomePageState extends State<HomePage> {
   String flow = 'none';
   final hostCtrl = TextEditingController();
   final netPortCtrl = TextEditingController();
+  final subTopicCtrl = TextEditingController();
+  final pubTopicCtrl = TextEditingController();
   bool connected = false;
 
   // view bar
@@ -370,6 +372,8 @@ class _HomePageState extends State<HomePage> {
     customBaudCtrl.dispose();
     hostCtrl.dispose();
     netPortCtrl.dispose();
+    subTopicCtrl.dispose();
+    pubTopicCtrl.dispose();
     mcpPortCtrl.dispose();
     outputFocus.dispose();
     super.dispose();
@@ -577,8 +581,16 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _syncControls(ConnConfig cfg) {
+    if (cfg is MqttConfig) {
+      transport = 'mqtt';
+      hostCtrl.text = cfg.host;
+      netPortCtrl.text = cfg.port.toString();
+      subTopicCtrl.text = cfg.subTopic;
+      pubTopicCtrl.text = cfg.pubTopic;
+      return;
+    }
     if (cfg is NetConfig) {
-      transport = cfg.protocol;
+      transport = cfg.server ? '${cfg.protocol}-server' : cfg.protocol;
       hostCtrl.text = cfg.host;
       netPortCtrl.text = cfg.port.toString();
       return;
@@ -620,6 +632,28 @@ class _HomePageState extends State<HomePage> {
   Future<void> _connectToggle() async {
     if (connected) {
       await serial.close();
+      return;
+    }
+
+    if (transport == 'mqtt') {
+      final host = hostCtrl.text.trim();
+      final p = int.tryParse(netPortCtrl.text.trim()) ?? 1883;
+      if (host.isEmpty) {
+        _appendSystem('Enter a broker host');
+        return;
+      }
+      final result = await serial.openMqtt(MqttConfig(
+        host: host,
+        port: p,
+        subTopic: subTopicCtrl.text.trim(),
+        pubTopic: pubTopicCtrl.text.trim(),
+      ));
+      if (result['ok'] != true) {
+        _appendSystem('Failed to connect MQTT $host:$p: ${result['error']}');
+      } else {
+        _appendSystem('Connected to broker $host:$p'
+            '${subTopicCtrl.text.trim().isEmpty ? '' : ', subscribed ${subTopicCtrl.text.trim()}'}');
+      }
       return;
     }
 
@@ -882,13 +916,15 @@ class _HomePageState extends State<HomePage> {
             'tcp',
             'udp',
             'tcp-server',
-            'udp-server'
+            'udp-server',
+            'mqtt'
           ], {
             'serial': 'Serial',
             'tcp': 'TCP client',
             'udp': 'UDP client',
             'tcp-server': 'TCP server',
             'udp-server': 'UDP server',
+            'mqtt': 'MQTT',
           }),
           disabled ? null : (v) => setState(() => transport = v!)),
       if (transport == 'serial') ...[
@@ -965,6 +1001,48 @@ class _HomePageState extends State<HomePage> {
             _items(['none', 'rtscts', 'xonxoff'],
                 {'none': 'None', 'rtscts': 'RTS/CTS', 'xonxoff': 'XON/XOFF'}),
             disabled ? null : (v) => setState(() => flow = v!)),
+      ] else if (transport == 'mqtt') ...[
+        _label('Broker'),
+        SizedBox(
+          width: 150,
+          child: TextField(
+            controller: hostCtrl,
+            enabled: !disabled,
+            style: const TextStyle(color: kText, fontSize: 13),
+            decoration: _inputDecoration('broker host'),
+          ),
+        ),
+        _label('Port'),
+        SizedBox(
+          width: 70,
+          child: TextField(
+            controller: netPortCtrl,
+            enabled: !disabled,
+            keyboardType: TextInputType.number,
+            style: const TextStyle(color: kText, fontSize: 13),
+            decoration: _inputDecoration('1883'),
+          ),
+        ),
+        _label('Sub'),
+        SizedBox(
+          width: 150,
+          child: TextField(
+            controller: subTopicCtrl,
+            enabled: !disabled,
+            style: const TextStyle(color: kText, fontSize: 13),
+            decoration: _inputDecoration('subscribe topic'),
+          ),
+        ),
+        _label('Pub'),
+        SizedBox(
+          width: 150,
+          child: TextField(
+            controller: pubTopicCtrl,
+            enabled: !disabled,
+            style: const TextStyle(color: kText, fontSize: 13),
+            decoration: _inputDecoration('publish topic'),
+          ),
+        ),
       ] else ...[
         _label(transport.endsWith('-server') ? 'Bind' : 'Host'),
         SizedBox(
@@ -1340,6 +1418,10 @@ class _HomePageState extends State<HomePage> {
       statusText = cfg.server
           ? 'Listening — ${cfg.protocol.toUpperCase()} server :${cfg.port}'
           : 'Connected — ${cfg.protocol.toUpperCase()} ${cfg.host}:${cfg.port}';
+    } else if (connected && cfg is MqttConfig) {
+      statusText = 'Connected — MQTT ${cfg.host}:${cfg.port}'
+          '${cfg.subTopic.isEmpty ? '' : ' sub:${cfg.subTopic}'}'
+          '${cfg.pubTopic.isEmpty ? '' : ' pub:${cfg.pubTopic}'}';
     } else {
       statusText = 'Disconnected';
     }

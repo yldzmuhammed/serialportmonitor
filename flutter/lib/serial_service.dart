@@ -4,6 +4,8 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_libserialport/flutter_libserialport.dart';
+import 'package:mqtt_client/mqtt_client.dart';
+import 'package:mqtt_client/mqtt_server_client.dart';
 
 import 'settings_store.dart';
 
@@ -83,6 +85,41 @@ class NetConfig extends ConnConfig {
       };
 }
 
+class MqttConfig extends ConnConfig {
+  final String host;
+  final int port;
+  final String subTopic; // topic (or wildcard) to subscribe; '' = none
+  final String pubTopic; // topic to publish sends to; '' = none
+  final String username;
+  final String password;
+  final String clientId;
+
+  MqttConfig({
+    required this.host,
+    this.port = 1883,
+    this.subTopic = '',
+    this.pubTopic = '',
+    this.username = '',
+    this.password = '',
+    this.clientId = '',
+  });
+
+  @override
+  String get kind => 'mqtt';
+  @override
+  String get label => 'mqtt $host:$port';
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'host': host,
+        'port': port,
+        'subTopic': subTopic,
+        'pubTopic': pubTopic,
+        if (username.isNotEmpty) 'username': username,
+        'clientId': clientId,
+      };
+}
+
 class CaptureEntry {
   final int seq;
   final String dir; // rx | tx
@@ -120,6 +157,8 @@ class SerialService {
   InternetAddress? _udpRemote;
   int _udpPort = 0;
   StreamSubscription? _netSub;
+  MqttServerClient? _mqtt;
+  StreamSubscription? _mqttSub;
 
   ConnConfig? activeConfig;
 
@@ -127,7 +166,8 @@ class SerialService {
       (_port?.isOpen ?? false) ||
       _tcp != null ||
       _tcpServer != null ||
-      _udp != null;
+      _udp != null ||
+      _mqtt?.connectionStatus?.state == MqttConnectionState.connected;
 
   /// Serial path of the active connection, or null when none/network.
   String? get serialPath =>
@@ -346,6 +386,73 @@ class SerialService {
     return {'ok': true};
   }
 
+  /// Connects to an MQTT broker, subscribes to a topic, and surfaces each
+  /// received message as a "topic  payload" line in the capture pipeline.
+  Future<Map<String, dynamic>> openMqtt(MqttConfig cfg,
+      {bool byAgent = false}) async {
+    if (_openPaths.contains(cfg.label) && activeConfig?.label != cfg.label) {
+      return {'ok': false, 'error': '${cfg.label} is already open in another tab'};
+    }
+    await close(silent: true);
+
+    final id = cfg.clientId.isNotEmpty
+        ? cfg.clientId
+        : 'portmon_${DateTime.now().millisecondsSinceEpoch}';
+    final client = MqttServerClient(cfg.host, id);
+    client.port = cfg.port;
+    client.keepAlivePeriod = 20;
+    client.logging(on: false);
+    client.autoReconnect = false;
+    client.onDisconnected = () {
+      if (_mqtt == client) {
+        _mqtt = null;
+        events.add(SerialEvent('closed'));
+      }
+    };
+    client.connectionMessage = MqttConnectMessage()
+        .withClientIdentifier(id)
+        .startClean();
+
+    try {
+      await client.connect(
+        cfg.username.isEmpty ? null : cfg.username,
+        cfg.password.isEmpty ? null : cfg.password,
+      );
+    } catch (e) {
+      client.disconnect();
+      return {'ok': false, 'error': e.toString()};
+    }
+    if (client.connectionStatus?.state != MqttConnectionState.connected) {
+      final st = client.connectionStatus;
+      client.disconnect();
+      return {'ok': false, 'error': 'Connect failed: ${st?.returnCode}'};
+    }
+
+    _mqtt = client;
+    activeConfig = cfg;
+    _openPaths.add(cfg.label);
+    rxTotal = 0;
+    txTotal = 0;
+    _rxAssembly = [];
+
+    if (cfg.subTopic.isNotEmpty) {
+      client.subscribe(cfg.subTopic, MqttQos.atLeastOnce);
+    }
+    _mqttSub = client.updates?.listen((events) {
+      for (final e in events) {
+        final msg = e.payload;
+        if (msg is MqttPublishMessage) {
+          final payload = MqttPublishPayload.bytesToStringAsString(
+              msg.payload.message);
+          _ingest(Uint8List.fromList(utf8.encode('${e.topic}  $payload\n')));
+        }
+      }
+    });
+
+    events.add(SerialEvent('opened', {'config': cfg, 'byAgent': byAgent}));
+    return {'ok': true};
+  }
+
   /// Feeds incoming bytes from any transport into the capture pipeline + UI.
   void _ingest(Uint8List data) {
     rxTotal += data.length;
@@ -383,6 +490,15 @@ class SerialService {
     _udp?.close();
     _udp = null;
     _udpRemote = null;
+    await _mqttSub?.cancel();
+    _mqttSub = null;
+    if (_mqtt != null) {
+      final c = _mqtt;
+      _mqtt = null; // clear first so onDisconnected doesn't re-emit 'closed'
+      try {
+        c!.disconnect();
+      } catch (_) {}
+    }
 
     if (activeConfig != null) _openPaths.remove(activeConfig!.label);
     activeConfig = null;
@@ -414,6 +530,30 @@ class SerialService {
       ]);
     } else {
       buf = Uint8List.fromList(utf8.encode(data + lineEnding));
+    }
+
+    // MQTT publishes the payload to the configured topic.
+    if (_mqtt != null) {
+      final cfg = activeConfig as MqttConfig;
+      if (cfg.pubTopic.isEmpty) {
+        return {'ok': false, 'error': 'No publish topic configured'};
+      }
+      final b = MqttClientPayloadBuilder();
+      for (final byte in buf) {
+        b.addByte(byte);
+      }
+      try {
+        _mqtt!.publishMessage(cfg.pubTopic, MqttQos.atLeastOnce, b.payload!);
+      } catch (e) {
+        return {'ok': false, 'error': e.toString()};
+      }
+      txTotal += buf.length;
+      _recordEntry('tx', buf);
+      if (byAgent) {
+        events.add(SerialEvent(
+            'agentTx', {'data': data, 'hex': hex, 'bytes': buf.length}));
+      }
+      return {'ok': true, 'bytes': buf.length};
     }
 
     int written;

@@ -63,7 +63,7 @@ class _RootPageState extends State<RootPage> {
       ),
       child: Column(children: [
         const SizedBox(height: 12),
-        _tab(0, Icons.cable, 'Serial'),
+        _tab(0, Icons.cable, 'Connections'),
         _tab(1, Icons.lan, 'Network'),
       ]),
     );

@@ -10,7 +10,6 @@ import 'settings_store.dart';
 
 class _Session {
   final SerialService serial;
-  final GlobalKey key = GlobalKey();
   StreamSubscription? sub;
   _Session(AppSettings settings) : serial = SerialService(settings);
   _Session.adopt(this.serial);
@@ -36,7 +35,9 @@ class SerialTabsPage extends StatefulWidget {
 
 class _SerialTabsPageState extends State<SerialTabsPage> {
   final List<_Session> _sessions = [];
-  int _active = 0;
+  int _active = 0; // left pane / MCP-active tab
+  bool _split = false;
+  int _rightActive = 0; // right pane when split
 
   @override
   void initState() {
@@ -79,6 +80,9 @@ class _SerialTabsPageState extends State<SerialTabsPage> {
         return;
       }
       if (_active >= _sessions.length) _active = _sessions.length - 1;
+      if (_rightActive >= _sessions.length) {
+        _rightActive = _sessions.length - 1;
+      }
     });
     _retargetMcp();
   }
@@ -105,23 +109,35 @@ class _SerialTabsPageState extends State<SerialTabsPage> {
     return 'Port ${i + 1}';
   }
 
+  // A pane = an IndexedStack over all sessions so every tab stays alive; the
+  // side prefix keeps left/right widget keys distinct.
+  Widget _pane(String side, int index) {
+    return IndexedStack(
+      index: index.clamp(0, _sessions.isEmpty ? 0 : _sessions.length - 1),
+      children: [
+        for (var i = 0; i < _sessions.length; i++)
+          HomePage(
+            key: ValueKey('$side$i'),
+            serial: _sessions[i].serial,
+            mcp: widget.mcp,
+            settings: widget.settings,
+          ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Column(children: [
       _tabBar(),
       Expanded(
-        child: IndexedStack(
-          index: _active,
-          children: [
-            for (final s in _sessions)
-              HomePage(
-                key: s.key,
-                serial: s.serial,
-                mcp: widget.mcp,
-                settings: widget.settings,
-              ),
-          ],
-        ),
+        child: _split
+            ? Row(children: [
+                Expanded(child: _pane('L', _active)),
+                const VerticalDivider(width: 1, color: kBorder),
+                Expanded(child: _pane('R', _rightActive)),
+              ])
+            : _pane('L', _active),
       ),
     ]);
   }
@@ -155,16 +171,38 @@ class _SerialTabsPageState extends State<SerialTabsPage> {
             ),
           ),
         ),
+        IconButton(
+          onPressed: () => setState(() {
+            _split = !_split;
+            if (_split && _rightActive == _active && _sessions.length > 1) {
+              _rightActive = (_active + 1) % _sessions.length;
+            }
+          }),
+          icon: Icon(Icons.vertical_split,
+              size: 18, color: _split ? kAccent : kTextDim),
+          tooltip: _split
+              ? 'Single pane'
+              : 'Split view (right-click a tab for the right pane)',
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(minWidth: 40, minHeight: 36),
+        ),
       ]),
     );
   }
 
   Widget _tab(int i) {
     final s = _sessions[i];
-    final active = i == _active;
+    final isLeft = i == _active;
+    final isRight = _split && i == _rightActive;
+    final active = isLeft || isRight;
     final connected = s.serial.connected;
     return InkWell(
       onTap: () => _select(i),
+      // right-click assigns the tab to the right pane (auto-enables split)
+      onSecondaryTap: () => setState(() {
+        _split = true;
+        _rightActive = i;
+      }),
       child: Container(
         constraints: const BoxConstraints(minWidth: 96, maxWidth: 200),
         padding: const EdgeInsets.only(left: 12, right: 4),
@@ -189,6 +227,22 @@ class _SerialTabsPageState extends State<SerialTabsPage> {
                   : Border.all(color: kTextDim, width: 1),
             ),
           ),
+          if (_split && isLeft)
+            const Padding(
+                padding: EdgeInsets.only(right: 4),
+                child: Text('L',
+                    style: TextStyle(
+                        color: kAccent,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700))),
+          if (_split && isRight)
+            const Padding(
+                padding: EdgeInsets.only(right: 4),
+                child: Text('R',
+                    style: TextStyle(
+                        color: kAccent,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700))),
           Flexible(
             child: Text(
               _titleFor(s, i),

@@ -247,6 +247,31 @@ class McpServer {
                 'tab': sessions.indexOf(active!) + 1
               }
             : nres;
+      case 'open_mqtt':
+        final host = args['host'] as String?;
+        if (host == null || host.isEmpty) {
+          return _toolError('open_mqtt requires "host"');
+        }
+        final mcfg = MqttConfig(
+          host: host,
+          port: (args['port'] as num?)?.toInt() ?? 1883,
+          subTopic: args['sub_topic'] as String? ?? '',
+          pubTopic: args['pub_topic'] as String? ?? '',
+          username: args['username'] as String? ?? '',
+          password: args['password'] as String? ?? '',
+        );
+        if (sessions.any((s) => s.activeConfig?.label == mcfg.label)) {
+          return _toolError('${mcfg.label} is already open in another tab.');
+        }
+        if (active == null) return _toolError('No serial session.');
+        final mres = await active!.openMqtt(mcfg, byAgent: true);
+        out = mres['ok'] == true
+            ? {
+                'ok': true,
+                'opened': mcfg.toJson(),
+                'tab': sessions.indexOf(active!) + 1
+              }
+            : mres;
       case 'close_port':
         out = await target!.close();
       case 'send_data':
@@ -405,9 +430,32 @@ class McpServer {
       },
     },
     {
+      'name': 'open_mqtt',
+      'description':
+          'Connect to an MQTT broker in the active tab. Subscribes to sub_topic (wildcards allowed); each received message is captured as a "topic  payload" line. send_data on this tab publishes its payload to pub_topic. Labelled "mqtt <host>:<port>" for the "port" targeting argument.',
+      'inputSchema': {
+        'type': 'object',
+        'properties': {
+          'host': {'type': 'string', 'description': 'Broker host or IP'},
+          'port': {'type': 'integer', 'description': 'Broker port (default 1883)'},
+          'sub_topic': {
+            'type': 'string',
+            'description': 'Topic/wildcard to subscribe to (optional)',
+          },
+          'pub_topic': {
+            'type': 'string',
+            'description': 'Topic that send_data publishes to (optional)',
+          },
+          'username': {'type': 'string', 'description': 'Broker username (optional)'},
+          'password': {'type': 'string', 'description': 'Broker password (optional)'},
+        },
+        'required': ['host'],
+      },
+    },
+    {
       'name': 'close_port',
       'description':
-          'Close an open connection (serial or socket). The app UI updates to show the disconnection.',
+          'Close an open connection (serial, socket, or MQTT). The app UI updates to show the disconnection.',
       'inputSchema': {
         'type': 'object',
         'properties': {

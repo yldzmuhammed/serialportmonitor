@@ -13,6 +13,7 @@ dependencies:
   file_selector: ^1.0.3
   path_provider: ^2.1.4
   multicast_dns: ^0.3.2
+  mqtt_client: ^10.0.0
 
 dev_dependencies:
   flutter_lints: ^4.0.0
