@@ -904,8 +904,17 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _toolbar() {
+    return Column(children: [
+      _bar(children: _rowConnectType()), // row 1: Connect + Type
+      _bar(children: _rowSettings()), // row 2: connection settings
+      if (transport == 'mqtt')
+        _bar(children: _rowTopics()), // row 3: Pub/Sub
+    ]);
+  }
+
+  List<Widget> _rowConnectType() {
     final disabled = connected;
-    return _bar(children: [
+    return [
       FilledButton(
         onPressed: _connectToggle,
         style: FilledButton.styleFrom(
@@ -934,7 +943,13 @@ class _HomePageState extends State<HomePage> {
             'mqtt': 'MQTT',
           }),
           disabled ? null : (v) => setState(() => transport = v!)),
-      if (transport == 'serial') ...[
+    ];
+  }
+
+  List<Widget> _rowSettings() {
+    final disabled = connected;
+    if (transport == 'serial') {
+      return [
         _label('Port'),
         _dropdown(
           selectedPort ?? '',
@@ -1008,7 +1023,10 @@ class _HomePageState extends State<HomePage> {
             _items(['none', 'rtscts', 'xonxoff'],
                 {'none': 'None', 'rtscts': 'RTS/CTS', 'xonxoff': 'XON/XOFF'}),
             disabled ? null : (v) => setState(() => flow = v!)),
-      ] else if (transport == 'mqtt') ...[
+      ];
+    }
+    if (transport == 'mqtt') {
+      return [
         _label('Broker'),
         SizedBox(
           width: 150,
@@ -1030,29 +1048,9 @@ class _HomePageState extends State<HomePage> {
             decoration: _inputDecoration('1883'),
           ),
         ),
-        _label('Sub'),
-        SizedBox(
-          width: 150,
-          child: TextField(
-            controller: subTopicCtrl,
-            enabled: !disabled,
-            style: const TextStyle(color: kText, fontSize: 13),
-            decoration: _inputDecoration('subscribe topic'),
-          ),
-        ),
-        _label('Pub'),
-        SizedBox(
-          width: 150,
-          child: TextField(
-            controller: pubTopicCtrl,
-            enabled: !disabled,
-            style: const TextStyle(color: kText, fontSize: 13),
-            decoration: _inputDecoration('publish topic'),
-          ),
-        ),
         _label('User'),
         SizedBox(
-          width: 110,
+          width: 130,
           child: TextField(
             controller: mqttUserCtrl,
             enabled: !disabled,
@@ -1062,7 +1060,7 @@ class _HomePageState extends State<HomePage> {
         ),
         _label('Pass'),
         SizedBox(
-          width: 110,
+          width: 130,
           child: TextField(
             controller: mqttPassCtrl,
             enabled: !disabled,
@@ -1071,31 +1069,59 @@ class _HomePageState extends State<HomePage> {
             decoration: _inputDecoration('password'),
           ),
         ),
-      ] else ...[
-        _label(transport.endsWith('-server') ? 'Bind' : 'Host'),
-        SizedBox(
-          width: 160,
-          child: TextField(
-            controller: hostCtrl,
-            enabled: !disabled,
-            style: const TextStyle(color: kText, fontSize: 13),
-            decoration: _inputDecoration(
-                transport.endsWith('-server') ? '0.0.0.0 (all)' : 'host or IP'),
-          ),
+      ];
+    }
+    // tcp/udp client or server
+    return [
+      _label(transport.endsWith('-server') ? 'Bind' : 'Host'),
+      SizedBox(
+        width: 160,
+        child: TextField(
+          controller: hostCtrl,
+          enabled: !disabled,
+          style: const TextStyle(color: kText, fontSize: 13),
+          decoration: _inputDecoration(
+              transport.endsWith('-server') ? '0.0.0.0 (all)' : 'host or IP'),
         ),
-        _label('Port'),
-        SizedBox(
-          width: 80,
-          child: TextField(
-            controller: netPortCtrl,
-            enabled: !disabled,
-            keyboardType: TextInputType.number,
-            style: const TextStyle(color: kText, fontSize: 13),
-            decoration: _inputDecoration('port'),
-          ),
+      ),
+      _label('Port'),
+      SizedBox(
+        width: 80,
+        child: TextField(
+          controller: netPortCtrl,
+          enabled: !disabled,
+          keyboardType: TextInputType.number,
+          style: const TextStyle(color: kText, fontSize: 13),
+          decoration: _inputDecoration('port'),
         ),
-      ],
-    ]);
+      ),
+    ];
+  }
+
+  List<Widget> _rowTopics() {
+    final disabled = connected;
+    return [
+      _label('Sub'),
+      SizedBox(
+        width: 220,
+        child: TextField(
+          controller: subTopicCtrl,
+          enabled: !disabled,
+          style: const TextStyle(color: kText, fontSize: 13),
+          decoration: _inputDecoration('subscribe topic (wildcards ok)'),
+        ),
+      ),
+      _label('Pub'),
+      SizedBox(
+        width: 220,
+        child: TextField(
+          controller: pubTopicCtrl,
+          enabled: !disabled,
+          style: const TextStyle(color: kText, fontSize: 13),
+          decoration: _inputDecoration('publish topic'),
+        ),
+      ),
+    ];
   }
 
   Widget _segButton(String label, String mode) {
