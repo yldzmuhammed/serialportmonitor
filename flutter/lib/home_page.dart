@@ -311,6 +311,8 @@ class _HomePageState extends State<HomePage> {
   final netPortCtrl = TextEditingController();
   final subTopicCtrl = TextEditingController();
   final pubTopicCtrl = TextEditingController();
+  final mqttUserCtrl = TextEditingController();
+  final mqttPassCtrl = TextEditingController();
   bool connected = false;
 
   // view bar
@@ -374,6 +376,8 @@ class _HomePageState extends State<HomePage> {
     netPortCtrl.dispose();
     subTopicCtrl.dispose();
     pubTopicCtrl.dispose();
+    mqttUserCtrl.dispose();
+    mqttPassCtrl.dispose();
     mcpPortCtrl.dispose();
     outputFocus.dispose();
     super.dispose();
@@ -587,6 +591,7 @@ class _HomePageState extends State<HomePage> {
       netPortCtrl.text = cfg.port.toString();
       subTopicCtrl.text = cfg.subTopic;
       pubTopicCtrl.text = cfg.pubTopic;
+      mqttUserCtrl.text = cfg.username;
       return;
     }
     if (cfg is NetConfig) {
@@ -647,6 +652,8 @@ class _HomePageState extends State<HomePage> {
         port: p,
         subTopic: subTopicCtrl.text.trim(),
         pubTopic: pubTopicCtrl.text.trim(),
+        username: mqttUserCtrl.text.trim(),
+        password: mqttPassCtrl.text,
       ));
       if (result['ok'] != true) {
         _appendSystem('Failed to connect MQTT $host:$p: ${result['error']}');
@@ -1041,6 +1048,27 @@ class _HomePageState extends State<HomePage> {
             enabled: !disabled,
             style: const TextStyle(color: kText, fontSize: 13),
             decoration: _inputDecoration('publish topic'),
+          ),
+        ),
+        _label('User'),
+        SizedBox(
+          width: 110,
+          child: TextField(
+            controller: mqttUserCtrl,
+            enabled: !disabled,
+            style: const TextStyle(color: kText, fontSize: 13),
+            decoration: _inputDecoration('username'),
+          ),
+        ),
+        _label('Pass'),
+        SizedBox(
+          width: 110,
+          child: TextField(
+            controller: mqttPassCtrl,
+            enabled: !disabled,
+            obscureText: true,
+            style: const TextStyle(color: kText, fontSize: 13),
+            decoration: _inputDecoration('password'),
           ),
         ),
       ] else ...[
